@@ -9,7 +9,6 @@ if not exist ".venv" (
     exit /b 1
 )
 
-:: 启动 TUI
-call .venv\Scripts\activate.bat
-python -m hawarma.tui
+:: 启动 TUI — 直接使用虚拟环境的 Python，避免 activate 不生效的问题
+.venv\Scripts\python.exe -m hawarma.tui
 pause
