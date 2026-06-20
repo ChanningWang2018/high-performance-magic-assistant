@@ -578,12 +578,11 @@ class GastronomeStrategy(Strategy):
                 else:
                     t_get = self.MOVE_TIME
             else:
-                free_cooker = self._find_free_cooker_for(state, ing_name, cooker_type)
-                if free_cooker:
+                cooker = state.cookers.get(cooker_type)
+                if cooker is None or not cooker.busy:
                     t_get = duration + self.MOVE_TIME
                 else:
-                    soonest_free = self._soonest_free_cooker(state)
-                    wait = max(0, soonest_free - state.time)
+                    wait = max(0, (cooker.done_at or state.time) - state.time)
                     t_get = wait + duration + self.MOVE_TIME
 
             max_ing_time = max(max_ing_time, t_get)
@@ -594,22 +593,9 @@ class GastronomeStrategy(Strategy):
 
         return max_ing_time + condiment_time + self.SERVE_TIME
 
-    def _find_free_cooker_for(self, state: UnifiedState, ing_name: str, cooker_type: str) -> bool:
-        """Check if a specific cooker type is free (not busy)."""
-        c = state.cookers.get(cooker_type)
-        return c is not None and not c.busy
-
-    def _soonest_free_cooker(self, state: UnifiedState) -> float:
-        """Return the earliest time any cooker becomes free (state.time if one is already free)."""
-        for c in state.cookers.values():
-            if not c.busy:
-                return state.time
-            if c.done_at is not None:
-                soonest = min(soonest, c.done_at)
-        return soonest if soonest != float('inf') else state.time
-
     def _order_is_ready(self, state: UnifiedState, order) -> bool:
         """Check if all ingredients for an order are done (in assembly, stockpile, or completed cooker)."""
+        ics = self._recipe_ingredient_cooker.get(order.recipe_slug, [])
         assembly_ing_names = set()
         for ing in state.assembly.ingredients_cookers:
             if isinstance(ing, tuple):
@@ -669,6 +655,7 @@ class GastronomeStrategy(Strategy):
 
     def _get_order_id_for_ingredient(self, state: UnifiedState, ingredient: str) -> int | None:
         """Find the best order_id for a given ingredient (lowest CP, considering bonuses)."""
+        best_order = None
         best_cp = float('inf')
         for _, order in self._prioritized_orders(state):
             recipe = self._recipe_by_slug.get(order.recipe_slug)
@@ -742,9 +729,11 @@ class GastronomeStrategy(Strategy):
 
     def _get_needed_item_names(self, state: UnifiedState) -> set[str]:
         """Return set of ingredient names still needed (cooker-agnostic)."""
+        return {ing for ing, _ in self._get_needed_ingredients(state)}
 
     def _can_add_to_assembly(self, state: UnifiedState, ingredient: str, cooker_type: str | None = None) -> bool:
         """Check if ingredient+cooker_type is compatible with current assembly (respects target_slug or inferred recipe)."""
+        assembly = state.assembly
         present_with_cooker = assembly.ingredients_cookers
         target_slug = assembly.target_recipe_slug
 
