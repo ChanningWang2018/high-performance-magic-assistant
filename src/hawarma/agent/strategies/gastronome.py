@@ -66,6 +66,7 @@ class GastronomeStrategy(Strategy):
     SINGLE_INGREDIENT_BONUS = 0.3
 
     def __init__(self):
+        """Initialize cached recipe/ingredient lookups (populated by on_game_start)."""
         self._recipe_by_slug: dict[str, Recipe] = {}
         self._recipe_condiments: dict[str, dict[str, int]] = {}
         self._ingredient_info: dict[str, tuple[str, float]] = {}
@@ -73,6 +74,7 @@ class GastronomeStrategy(Strategy):
         self._reward_lookup = None
 
     def on_game_start(self, recipes: dict[str, Recipe]) -> None:
+        """Cache recipe, ingredient, and condiment data; build reward lookup."""
         self._recipe_by_slug = recipes
         self._recipe_condiments = {}
         self._ingredient_info = {}
@@ -94,6 +96,7 @@ class GastronomeStrategy(Strategy):
     # ====================================================================
 
     def decide(self, state: UnifiedState) -> Action | None:
+        """10-level greedy cascade: clear → serve → clear_expired → move → cook → condiment → stockpile → precook → store."""
         assembly_ings = [
             ing[0] if isinstance(ing, tuple) else ing
             for ing in state.assembly.ingredients_cookers
@@ -127,6 +130,7 @@ class GastronomeStrategy(Strategy):
     # ====================================================================
 
     def _try_serve(self, state: UnifiedState, assembly_ings: list[str]) -> ServeOrderAction | None:
+        """Serve if assembly matches a recipe ingredients + condiments, respecting target_slug."""
         if state.is_in_animation_window:
             return None
         assembly = state.assembly
@@ -150,6 +154,7 @@ class GastronomeStrategy(Strategy):
     # ====================================================================
 
     def _try_clear_assembly(self, state: UnifiedState, assembly_ings: list[str]) -> ClearAssemblyAction | None:
+        """Clear assembly if ingredients mismatch recipe, target order gone, or CPM preemption triggered."""
         assembly = state.assembly
         if not assembly.ingredients_cookers:
             return None
@@ -220,6 +225,7 @@ class GastronomeStrategy(Strategy):
     # ====================================================================
 
     def _try_clear_expired(self, state: UnifiedState) -> ClearCookerAction | None:
+        """Clear first expired cooker to free the slot."""
         for cooker_name, cooker in state.cookers.items():
             if cooker.busy and cooker.is_expired(state.time):
                 return ClearCookerAction(cooker=cooker_name)
@@ -230,6 +236,7 @@ class GastronomeStrategy(Strategy):
     # ====================================================================
 
     def _try_move_to_assembly(self, state: UnifiedState, assembly_ings: list[str]) -> MoveToAssemblyAction | None:
+        """Move done ingredient to assembly, preferring oldest (most urgent)."""
         needed = self._get_needed_ingredients(state)
         all_needed_with_cooker: list[tuple[str, str]] = []
         for order in state.orders:
@@ -275,6 +282,7 @@ class GastronomeStrategy(Strategy):
     # ====================================================================
 
     def _try_parallel_cooking(self, state: UnifiedState, assembly_ings: list[str]) -> CookAction | None:
+        """Cook missing ingredients on free cookers, prioritized by CPM score (-cp + duration)."""
         free_cookers = [name for name, c in state.cookers.items() if not c.busy]
         if not free_cookers:
             return None
@@ -333,6 +341,7 @@ class GastronomeStrategy(Strategy):
     # ====================================================================
 
     def _try_add_condiment_urgent(self, state: UnifiedState, assembly_ings: list[str]) -> AddCondimentAction | None:
+        """Add missing condiment when assembly ingredients match a target recipe."""
         assembly = state.assembly
         if not assembly.ingredients_cookers:
             return None
@@ -360,6 +369,7 @@ class GastronomeStrategy(Strategy):
     # ====================================================================
 
     def _try_pull_from_stockpile_urgent(self, state: UnifiedState) -> PullFromStockpileAction | None:
+        """Pull needed ingredient from stockpile when assembly already has a target slug."""
         assembly = state.assembly
         if not assembly.target_recipe_slug:
             if assembly.ingredients_cookers:
@@ -381,6 +391,7 @@ class GastronomeStrategy(Strategy):
         return None
 
     def _try_pull_from_stockpile(self, state: UnifiedState) -> PullFromStockpileAction | None:
+        """Pull from stockpile when needed ingredient exists and can be added to assembly."""
         assembly = state.assembly
         if assembly.target_recipe_slug:
             has_active = any(
@@ -403,6 +414,7 @@ class GastronomeStrategy(Strategy):
     # ====================================================================
 
     def _try_precook(self, state: UnifiedState, assembly_ings: list[str]) -> CookAction | None:
+        """Pre-cook ingredients for active (then fallback) orders when cookers are free and stockpile not full."""
         remaining_time = state.game_duration - state.time
         if remaining_time < self.PRECOOK_STOP_TIME:
             return None
@@ -459,6 +471,7 @@ class GastronomeStrategy(Strategy):
     # ====================================================================
 
     def _try_store_to_stockpile(self, state: UnifiedState) -> MoveToStockpileAction | None:
+        """Store done ingredients to stockpile, prioritized by needed > near-expired > normal."""
         assembly = state.assembly
         needed = self._get_needed_item_names(state)
 
@@ -507,6 +520,7 @@ class GastronomeStrategy(Strategy):
     # ====================================================================
 
     def _prioritized_orders(self, state: UnifiedState):
+        """Yield (slot_idx, order) sorted by CP asc, then rush status; includes visibility crossing & single-ingredient bonus."""
         active = [(i, o) for i, o in enumerate(state.orders) if o and not o.done]
         scored = []
         for slot_idx, order in active:
@@ -527,6 +541,7 @@ class GastronomeStrategy(Strategy):
     # ====================================================================
 
     def _get_critical_path(self, state: UnifiedState, order) -> float:
+        """Estimate remaining time to complete order: max ingredient wait + condiments + serve."""
         ics = self._recipe_ingredient_cooker.get(order.recipe_slug, [])
         if not ics:
             return float('inf')
@@ -580,11 +595,12 @@ class GastronomeStrategy(Strategy):
         return max_ing_time + condiment_time + self.SERVE_TIME
 
     def _find_free_cooker_for(self, state: UnifiedState, ing_name: str, cooker_type: str) -> bool:
+        """Check if a specific cooker type is free (not busy)."""
         c = state.cookers.get(cooker_type)
         return c is not None and not c.busy
 
     def _soonest_free_cooker(self, state: UnifiedState) -> float:
-        soonest = float('inf')
+        """Return the earliest time any cooker becomes free (state.time if one is already free)."""
         for c in state.cookers.values():
             if not c.busy:
                 return state.time
@@ -593,7 +609,7 @@ class GastronomeStrategy(Strategy):
         return soonest if soonest != float('inf') else state.time
 
     def _order_is_ready(self, state: UnifiedState, order) -> bool:
-        ics = self._recipe_ingredient_cooker.get(order.recipe_slug, [])
+        """Check if all ingredients for an order are done (in assembly, stockpile, or completed cooker)."""
         assembly_ing_names = set()
         for ing in state.assembly.ingredients_cookers:
             if isinstance(ing, tuple):
@@ -626,17 +642,20 @@ class GastronomeStrategy(Strategy):
     # ====================================================================
 
     def _get_order_visibility(self, order) -> int:
+        """Return order's visibility reward based on recipe and condiment status."""
         if self._reward_lookup is None:
             return 30
         return self._reward_lookup.get_visibility(order.recipe_slug, has_condiments=True)
 
     def _next_threshold(self, current_vis: float) -> float | None:
+        """Return next visibility threshold above current, or None if all crossed."""
         for t in self.VIS_THRESHOLDS:
             if current_vis < t:
                 return t
         return None
 
     def _will_cross_threshold(self, state: UnifiedState, order) -> bool:
+        """Check if completing this order will cross a visibility milestone."""
         current_vis = state.total_visibility
         order_vis = self._get_order_visibility(order)
         next_threshold = self._next_threshold(current_vis)
@@ -649,7 +668,7 @@ class GastronomeStrategy(Strategy):
     # ====================================================================
 
     def _get_order_id_for_ingredient(self, state: UnifiedState, ingredient: str) -> int | None:
-        best_order = None
+        """Find the best order_id for a given ingredient (lowest CP, considering bonuses)."""
         best_cp = float('inf')
         for _, order in self._prioritized_orders(state):
             recipe = self._recipe_by_slug.get(order.recipe_slug)
@@ -667,6 +686,7 @@ class GastronomeStrategy(Strategy):
         return best_order.order_id if best_order else None
 
     def _get_order_id_for_ingredient_with_cooker(self, state: UnifiedState, ingredient: str, cooker_type: str) -> int | None:
+        """Find order_id where ingredient + cooker_type matches (first match in priority order)."""
         for _, order in self._prioritized_orders(state):
             ics = self._recipe_ingredient_cooker.get(order.recipe_slug, [])
             for ing_name, ck, _ in ics:
@@ -679,6 +699,7 @@ class GastronomeStrategy(Strategy):
     # ====================================================================
 
     def _get_needed_ingredients(self, state: UnifiedState) -> list[tuple[str, str]]:
+        """Return list of (ingredient, cooker_type) still needed for the current target or best-guess order."""
         assembly = state.assembly
         target_slug = assembly.target_recipe_slug
         present = set(assembly.ingredients_cookers)
@@ -720,10 +741,10 @@ class GastronomeStrategy(Strategy):
         return []
 
     def _get_needed_item_names(self, state: UnifiedState) -> set[str]:
-        return {ing for ing, _ in self._get_needed_ingredients(state)}
+        """Return set of ingredient names still needed (cooker-agnostic)."""
 
     def _can_add_to_assembly(self, state: UnifiedState, ingredient: str, cooker_type: str | None = None) -> bool:
-        assembly = state.assembly
+        """Check if ingredient+cooker_type is compatible with current assembly (respects target_slug or inferred recipe)."""
         present_with_cooker = assembly.ingredients_cookers
         target_slug = assembly.target_recipe_slug
 
@@ -783,6 +804,7 @@ class GastronomeStrategy(Strategy):
         return (ingredient, cooker_type) not in present_combinations
 
     def _is_cooking(self, state: UnifiedState, ingredient: str, cooker_type: str | None = None) -> bool:
+        """Check if ingredient is currently being cooked (optionally filtered by cooker_type)."""
         for cooker in state.cookers.values():
             if cooker.busy and cooker.item_name == ingredient:
                 if cooker_type is None or cooker.cooker_type == cooker_type:
@@ -790,6 +812,7 @@ class GastronomeStrategy(Strategy):
         return False
 
     def _has_in_stockpile(self, state: UnifiedState, ingredient: str, cooker_type: str | None = None) -> bool:
+        """Check if ingredient is available in stockpile (optionally filtered by cooker_type)."""
         for slot in state.stockpile.values():
             if slot.item_name == ingredient and slot.count > 0:
                 if cooker_type is None or slot.cooker_type == cooker_type:
@@ -797,6 +820,7 @@ class GastronomeStrategy(Strategy):
         return False
 
     def _find_available_slot(self, state: UnifiedState, ingredient: str, cooker_type: str) -> str | None:
+        """Find a stockpile slot that can accept the ingredient (empty or matching, under capacity)."""
         for slot_name, slot in state.stockpile.items():
             if slot.item_name is None or (slot.item_name == ingredient and slot.cooker_type == cooker_type):
                 if slot.count < 5:
@@ -804,6 +828,7 @@ class GastronomeStrategy(Strategy):
         return None
 
     def _try_increment_stockpile(self, state: UnifiedState, ingredient: str, cooker_type: str) -> str | None:
+        """Find an existing slot with the same ingredient+cooker_type that still has room."""
         for slot_name, slot in state.stockpile.items():
             if slot.item_name == ingredient and slot.cooker_type == cooker_type:
                 if slot.count < 5:
@@ -811,6 +836,7 @@ class GastronomeStrategy(Strategy):
         return None
 
     def _infer_recipe_from_assembly(self, state: UnifiedState) -> str | None:
+        """Guess which recipe the current assembly belongs to, based on matching ingredient pairs."""
         assembly = state.assembly
         if not assembly.ingredients_cookers:
             return None
@@ -829,6 +855,7 @@ class GastronomeStrategy(Strategy):
         return None
 
     def _ingredients_match(self, actual: list, recipe) -> bool:
+        """Check if assembly ingredients (name, cooker_type) match exactly with recipe ingredients."""
         if len(actual) != len(recipe.ingredients):
             return False
         expected_pairs = set()
@@ -843,6 +870,7 @@ class GastronomeStrategy(Strategy):
         return actual_pairs == expected_pairs
 
     def _condiments_complete(self, applied: dict[str, int], needed: dict[str, int]) -> bool:
+        """Check if all required condiments have been applied in sufficient quantity."""
         for condiment, count in needed.items():
             if applied.get(condiment, 0) < count:
                 return False
