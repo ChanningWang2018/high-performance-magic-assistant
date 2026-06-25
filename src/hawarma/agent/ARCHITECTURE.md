@@ -243,26 +243,24 @@ Agent Shell 通过 `self.env` 访问 GameEnv 提供的状态接口，并封装�
 ### 推断策略
 
 ```python
-def _infer_recipe_from_assembly(self) -> Optional[str]:
-    """根据组装站食材推断匹配的配方"""
-    assembly = self.env.assembly
-    if not assembly.ingredients:
+def _infer_recipe_from_assembly(self, state: UnifiedState) -> str | None:
+    """根据组装站食材推断匹配的配方（精确匹配）"""
+    assembly = state.assembly
+    if not assembly.ingredients_cookers:
         return None
-    
-    assembly_names = [ing[0] if isinstance(ing, tuple) else ing for ing in assembly.ingredients]
-    
-    for _, order in self._prioritized_orders():
-        recipe = self._recipe_by_slug.get(order.recipe_slug)
-        if recipe:
-            raw = recipe.raw_ingredients
-            if all(ing in raw for ing in assembly_names):
-                return order.recipe_slug
+    assembly_pairs = {(ing[0], ing[1]) for ing in assembly.ingredients_cookers}
+
+    for _, order in self._prioritized_orders(state):
+        ics = self._recipe_ingredient_cooker.get(order.recipe_slug, [])
+        recipe_pairs = {(n, c) for n, c, _ in ics}
+        if assembly_pairs == recipe_pairs:
+            return order.recipe_slug
     return None
 ```
 
 **设计原则**：
 - 按订单优先级遍历（rush 优先、timeout 近的优先）
-- 只要组装站所有食材都属于某个订单的配方，即认为匹配
+- 组装站食材必须与配方食材**精确匹配**（数量、名称、灶台类型全部一致）
 - 返回第一个匹配的订单配方
 
 ### 使用场景

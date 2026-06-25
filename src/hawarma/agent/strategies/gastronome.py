@@ -46,10 +46,7 @@ class GastronomeStrategy(Strategy):
     # CPM 抢占阈值：只有当短订单 CP 比 assembly 订单 CP 短这么多时才抢占
     PREEMPT_THRESHOLD = 3.0
 
-    # 库存与时间（delay_aware 调优）
     EXPIRED_THRESHOLD = 5.0
-    WARN_THRESHOLD = 3.0
-    PRECOOK_STORE_THRESHOLD = 1.0
     MAX_PRECOOK_STOCKPILE = 4
     PRECOOK_STOP_TIME = 15.0
     MIN_PRECOOK_DURATION = 1.0
@@ -69,7 +66,6 @@ class GastronomeStrategy(Strategy):
         """Initialize cached recipe/ingredient lookups (populated by on_game_start)."""
         self._recipe_by_slug: dict[str, Recipe] = {}
         self._recipe_condiments: dict[str, dict[str, int]] = {}
-        self._ingredient_info: dict[str, tuple[str, float]] = {}
         self._recipe_ingredient_cooker: dict[str, list[tuple[str, str, float]]] = {}
         self._reward_lookup = None
 
@@ -77,16 +73,14 @@ class GastronomeStrategy(Strategy):
         """Cache recipe, ingredient, and condiment data; build reward lookup."""
         self._recipe_by_slug = recipes
         self._recipe_condiments = {}
-        self._ingredient_info = {}
         self._recipe_ingredient_cooker = {}
 
         for slug, recipe in recipes.items():
             self._recipe_condiments[slug] = dict(recipe.condiments)
-            ics = []
-            for ing in recipe.ingredients:
-                self._ingredient_info[ing.name] = (ing.cooker_type, ing.duration)
-                ics.append((ing.name, ing.cooker_type, ing.duration))
-            self._recipe_ingredient_cooker[slug] = ics
+            self._recipe_ingredient_cooker[slug] = [
+                (ing.name, ing.cooker_type, ing.duration)
+                for ing in recipe.ingredients
+            ]
 
         from hawarma.core.reward import RecipeRewardLookup
         self._reward_lookup = RecipeRewardLookup()
@@ -97,10 +91,7 @@ class GastronomeStrategy(Strategy):
 
     def decide(self, state: UnifiedState) -> Action | None:
         """10-level greedy cascade: clear → serve → clear_expired → move → cook → condiment → stockpile → precook → store."""
-        assembly_ings = [
-            ing[0] if isinstance(ing, tuple) else ing
-            for ing in state.assembly.ingredients_cookers
-        ]
+        assembly_ings = [ing[0] for ing in state.assembly.ingredients_cookers]
 
         if action := self._try_clear_assembly(state, assembly_ings):
             return action
@@ -169,12 +160,7 @@ class GastronomeStrategy(Strategy):
                 return ClearAssemblyAction()
             ics = self._recipe_ingredient_cooker.get(target_slug, [])
             recipe_pairs = {(n, c) for n, c, _ in ics}
-            assembly_pairs = set()
-            for ing in assembly.ingredients_cookers:
-                if isinstance(ing, tuple):
-                    assembly_pairs.add((ing[0], ing[1] if len(ing) > 1 else None))
-                else:
-                    assembly_pairs.add((ing, None))
+            assembly_pairs = {(ing[0], ing[1]) for ing in assembly.ingredients_cookers}
             if not assembly_pairs.issubset(recipe_pairs):
                 return ClearAssemblyAction()
 
@@ -203,12 +189,7 @@ class GastronomeStrategy(Strategy):
         ):
             return None
 
-        assembly_pairs = set()
-        for ing in assembly.ingredients_cookers:
-            if isinstance(ing, tuple):
-                assembly_pairs.add((ing[0], ing[1] if len(ing) > 1 else None))
-            else:
-                assembly_pairs.add((ing, None))
+        assembly_pairs = {(ing[0], ing[1]) for ing in assembly.ingredients_cookers}
 
         for order in state.orders:
             if not order or order.done:
@@ -546,12 +527,7 @@ class GastronomeStrategy(Strategy):
         if not ics:
             return float('inf')
 
-        assembly_ing_names = set()
-        for ing in state.assembly.ingredients_cookers:
-            if isinstance(ing, tuple):
-                assembly_ing_names.add(ing[0])
-            else:
-                assembly_ing_names.add(ing)
+        assembly_ing_names = {ing[0] for ing in state.assembly.ingredients_cookers}
 
         stockpile_ings: dict[str, int] = {}
         for slot in state.stockpile.values():
@@ -596,12 +572,7 @@ class GastronomeStrategy(Strategy):
     def _order_is_ready(self, state: UnifiedState, order) -> bool:
         """Check if all ingredients for an order are done (in assembly, stockpile, or completed cooker)."""
         ics = self._recipe_ingredient_cooker.get(order.recipe_slug, [])
-        assembly_ing_names = set()
-        for ing in state.assembly.ingredients_cookers:
-            if isinstance(ing, tuple):
-                assembly_ing_names.add(ing[0])
-            else:
-                assembly_ing_names.add(ing)
+        assembly_ing_names = {ing[0] for ing in state.assembly.ingredients_cookers}
 
         stockpile_ings: dict[str, int] = {}
         for slot in state.stockpile.values():
@@ -654,23 +625,12 @@ class GastronomeStrategy(Strategy):
     # ====================================================================
 
     def _get_order_id_for_ingredient(self, state: UnifiedState, ingredient: str) -> int | None:
-        """Find the best order_id for a given ingredient (lowest CP, considering bonuses)."""
-        best_order = None
-        best_cp = float('inf')
+        """Return the highest-priority order_id that uses this ingredient."""
         for _, order in self._prioritized_orders(state):
             recipe = self._recipe_by_slug.get(order.recipe_slug)
-            if recipe:
-                if ingredient in recipe.raw_ingredients:
-                    cp = self._get_critical_path(state, order)
-                    if self._will_cross_threshold(state, order):
-                        cp -= self.CROSSING_BONUS
-                    ics = self._recipe_ingredient_cooker.get(order.recipe_slug, [])
-                    if len(ics) == 1:
-                        cp -= self.SINGLE_INGREDIENT_BONUS
-                    if cp < best_cp:
-                        best_cp = cp
-                        best_order = order
-        return best_order.order_id if best_order else None
+            if recipe and ingredient in recipe.raw_ingredients:
+                return order.order_id
+        return None
 
     def _get_order_id_for_ingredient_with_cooker(self, state: UnifiedState, ingredient: str, cooker_type: str) -> int | None:
         """Find order_id where ingredient + cooker_type matches (first match in priority order)."""
@@ -693,22 +653,14 @@ class GastronomeStrategy(Strategy):
 
         if target_slug:
             ics = self._recipe_ingredient_cooker.get(target_slug, [])
-            present_pairs = set()
-            for ing in present:
-                if isinstance(ing, tuple):
-                    present_pairs.add((ing[0], ing[1] if len(ing) > 1 else None))
-                else:
-                    present_pairs.add((ing, None))
+            present_pairs = {(ing[0], ing[1]) for ing in present}
             result = []
             for ing_name, cooker, _ in ics:
                 if (ing_name, cooker) not in present_pairs:
                     result.append((ing_name, cooker))
             return result
 
-        present_ing_names = set()
-        for ing in present:
-            name = ing[0] if isinstance(ing, tuple) else ing
-            present_ing_names.add(name)
+        present_ing_names = {ing[0] for ing in present}
 
         if not present_ing_names:
             for _, order in self._prioritized_orders(state):
@@ -741,7 +693,7 @@ class GastronomeStrategy(Strategy):
             return True
 
         if not target_slug:
-            present_ing_combos = {(t[0], t[1]) if isinstance(t, tuple) else (t, None) for t in present_with_cooker}
+            present_ing_combos = {(t[0], t[1]) for t in present_with_cooker}
             compatible_slugs = []
             for order in state.orders:
                 if not order or order.done:
@@ -786,10 +738,7 @@ class GastronomeStrategy(Strategy):
         if not found:
             return False
 
-        present_combinations = {
-            (ing[0], ing[1]) if isinstance(ing, tuple) else (ing, None)
-            for ing in present_with_cooker
-        }
+        present_combinations = {(ing[0], ing[1]) for ing in present_with_cooker}
         return (ingredient, cooker_type) not in present_combinations
 
     def _is_cooking(self, state: UnifiedState, ingredient: str, cooker_type: str | None = None) -> bool:
@@ -829,12 +778,7 @@ class GastronomeStrategy(Strategy):
         assembly = state.assembly
         if not assembly.ingredients_cookers:
             return None
-        assembly_pairs = set()
-        for ing in assembly.ingredients_cookers:
-            if isinstance(ing, tuple):
-                assembly_pairs.add((ing[0], ing[1] if len(ing) > 1 else None))
-            else:
-                assembly_pairs.add((ing, None))
+        assembly_pairs = {(ing[0], ing[1]) for ing in assembly.ingredients_cookers}
 
         for _, order in self._prioritized_orders(state):
             ics = self._recipe_ingredient_cooker.get(order.recipe_slug, [])
@@ -850,12 +794,7 @@ class GastronomeStrategy(Strategy):
         expected_pairs = set()
         for ing in recipe.ingredients:
             expected_pairs.add((ing.name, ing.cooker_type))
-        actual_pairs = set()
-        for ing in actual:
-            if isinstance(ing, tuple):
-                actual_pairs.add((ing[0], ing[1] if len(ing) > 1 else None))
-            else:
-                actual_pairs.add((ing, None))
+        actual_pairs = {(ing[0], ing[1]) for ing in actual}
         return actual_pairs == expected_pairs
 
     def _condiments_complete(self, applied: dict[str, int], needed: dict[str, int]) -> bool:
