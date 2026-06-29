@@ -2,22 +2,31 @@
 
 自动识别订单、管理烹饪流水线、最优策略配菜的自动化机器人。
 
+[![中文](https://img.shields.io/badge/lang-中文-red.svg)](README.md)
+[![English](https://img.shields.io/badge/lang-English-blue.svg)](README.en.md)
+
 ## 快速开始
 
-### 1. 安装 Python
+### 1. 安装 Git
+
+下载并安装 **Git**：https://git-scm.com/downloads
+
+> Windows 安装时保持默认选项即可。Mac 可用 `brew install git`，Linux 可用 `apt install git`。
+
+### 2. 安装 Python
 
 下载并安装 **Python 3.10+**：https://www.python.org/downloads/
 
 > Windows 安装时请勾选 **"Add Python to PATH"**
 
-### 2. 下载项目
+### 3. 下载项目
 
 ```bash
 git clone https://github.com/hpma-bits/hawarma.git
 cd hawarma
 ```
 
-### 3. 一键安装
+### 4. 一键安装
 
 **Windows:**
 ```bash
@@ -30,9 +39,11 @@ chmod +x setup.sh
 ./setup.sh
 ```
 
-### 4. 启动
+### 5. 启动
 
-**方式一：双击 `run.bat`（Windows）或 `./run.sh`（Mac/Linux）**
+**方式一：双击脚本**
+- Windows: `run.bat`
+- Mac/Linux: `./run.sh`
 
 **方式二：命令行**
 ```bash
@@ -46,6 +57,7 @@ python -m hawarma
 ## 前置要求
 
 - **Python 3.10+**
+- **Git**
 - **Android 模拟器**（如 MuMu、雷电、夜神）
 - 模拟器需开启 ADB 调试，默认连接地址 `127.0.0.1:16384`
 - 游戏已安装在模拟器中
@@ -69,7 +81,7 @@ python -m hawarma.tui
 ```bash
 python -m hawarma                    # 默认策略
 python -m hawarma --strategy cpm     # 指定策略
-python -m hawarma --station dessert   # 甜点站
+python -m hawarma --station dessert  # 甜点站
 ```
 
 ### 策略列表
