@@ -39,6 +39,25 @@ chmod +x setup.sh
 ./setup.sh
 ```
 
+> **One-click setup failed?** Follow these manual steps:
+>
+> ```bash
+> # 1. Create virtual environment
+> python -m venv .venv
+>
+> # 2. Activate it
+> # Windows:
+> .venv\Scripts\activate
+> # Mac/Linux:
+> source .venv/bin/activate
+>
+> # 3. Install dependencies (uv is faster)
+> pip install uv
+> uv pip install -e .
+> # If uv fails, fall back to pip:
+> pip install -e .
+> ```
+
 ### 5. Launch
 
 **Option 1: Double-click the script**

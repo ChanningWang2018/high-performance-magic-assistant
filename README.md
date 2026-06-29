@@ -39,6 +39,25 @@ chmod +x setup.sh
 ./setup.sh
 ```
 
+> **一键安装失败？** 可按以下步骤手动安装：
+>
+> ```bash
+> # 1. 创建虚拟环境
+> python -m venv .venv
+>
+> # 2. 激活虚拟环境
+> # Windows:
+> .venv\Scripts\activate
+> # Mac/Linux:
+> source .venv/bin/activate
+>
+> # 3. 安装依赖（推荐使用 uv，更快）
+> pip install uv
+> uv pip install -e .
+> # 如果 uv 安装失败，直接使用 pip：
+> pip install -e .
+> ```
+
 ### 5. 启动
 
 **方式一：双击脚本**
