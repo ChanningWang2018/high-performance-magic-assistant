@@ -7,7 +7,7 @@ requires-python = ">=3.10"
 license = "MIT"
 keywords = ["game-automation", "airtest", "agent"]
 dependencies = [
-    "airtest",
+    "airtest @ git+https://github.com/ChanningWang2018/Airtest.git",
     "loguru>=0.7.3",
     "pydantic>=2.11.5",
     "pyyaml>=6.0.2",
@@ -31,5 +31,3 @@ dev = [
     "pytest>=9.0.3",
 ]
 
-[tool.uv.sources]
-airtest = { git = "https://github.com/ChanningWang2018/Airtest.git", rev = "master" }
