@@ -21,7 +21,6 @@ from hawarma.paths import config_path as get_config_path
 
 class ScreenConfig(BaseModel):
     resolution: tuple[int, int] = (1920, 1080)
-    save_screenshots: bool = False
     assembly_station_position: tuple[int, int] = (1375, 865)
     trash_position: tuple[int, int] = (25, 590)
     timer_region: tuple[int, int, int, int] = (0, 0, 400, 140)
@@ -58,6 +57,7 @@ class MatchingConfig(BaseModel):
     ingredients_threshold: float = 0.7
     save_best_match_images: bool = False
     assembly_threshold: float = 0.9
+    timer_threshold: float = 0.7
     default_strategy: list[str] = Field(default_factory=list)
 
 
@@ -79,7 +79,9 @@ class GameConfig(BaseModel):
 class DebugConfig(BaseModel):
     save_order_screenshots: bool = False
     save_assembly_verify_screenshots: bool = False
+    save_timer_screenshots: bool = False
     screenshot_directory: str = "logs/order_screenshots"
+    timer_screenshot_directory: str = "logs/timer_screenshots"
 
 
 class StirConfig(BaseModel):

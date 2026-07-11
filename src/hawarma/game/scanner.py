@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Optional
 
 from airtest.core.api import G, Template
+from airtest.aircv import crop_image
 from loguru import logger
 
 from hawarma.config import AppConfig
@@ -83,16 +84,24 @@ class Scanner:
         # 调试配置
         self._save_screenshots = config.debug.save_order_screenshots
         self._screenshot_dir = Path(config.debug.screenshot_directory)
+        self._save_timer_screenshots = config.debug.save_timer_screenshots
+        self._timer_screenshot_dir = resolve_path(config.debug.timer_screenshot_directory)
+        self._last_timer_save = 0.0
 
         # 创建截图目录
         if self._save_screenshots and not self._screenshot_dir.exists():
             self._screenshot_dir.mkdir(parents=True, exist_ok=True)
+        if self._save_timer_screenshots and not self._timer_screenshot_dir.exists():
+            self._timer_screenshot_dir.mkdir(parents=True, exist_ok=True)
 
         # 注意：minicap 截图是延迟初始化的
         # 第一次调用 snapshot 时才会建立 stream 连接
         # 避免在初始化时预热导致帧缓冲区积累
 
-        logger.info(f"Scanner initialized with {len(recipes)} recipes")
+        logger.info(
+            f"Scanner initialized with {len(recipes)} recipes "
+            f"(timer_threshold={self.config.matching.timer_threshold})"
+        )
 
     async def detect_timer(self) -> bool:
         """
@@ -111,8 +120,29 @@ class Scanner:
             return False
 
         roi = tuple(self.config.screen.timer_region)
-        match = local_match(Template(str(timer_path)), roi, screen)
+        threshold = self.config.matching.timer_threshold
+        match = local_match(Template(str(timer_path), threshold=threshold), roi, screen)
+        if self._save_timer_screenshots and time.time() - self._last_timer_save >= 1.0:
+            self._save_timer_screenshot(screen, roi, match is not None)
+            self._last_timer_save = time.time()
         return match is not None
+
+    def _save_timer_screenshot(
+        self, screen, roi: tuple[int, int, int, int], matched: bool
+    ) -> None:
+        """保存 timer 检测时的截图（含 timer_region 裁剪），用于调试匹配失败"""
+        try:
+            import cv2
+            import time
+
+            cropped = crop_image(screen, roi)
+            timestamp = int(time.time() * 1000)
+            status = "hit" if matched else "miss"
+            filename = f"timer_{timestamp}_{status}.jpg"
+            cv2.imwrite(str(self._timer_screenshot_dir / filename), cropped)
+            logger.debug(f"Saved timer debug screenshot: {filename}")
+        except Exception as e:
+            logger.warning(f"Failed to save timer debug screenshot: {e}")
 
     async def scan_orders(self) -> list[Optional[DetectedOrder]]:
         """

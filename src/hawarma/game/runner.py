@@ -90,18 +90,49 @@ class Runner:
         return self.env.get_stats()
 
     async def _wait_for_game_start(self) -> None:
-        """等待游戏开始：检测 timer，然后等待 3 秒"""
-        logger.info("Waiting for game start (timer detection)...")
+        """等待游戏开始：优先检测 timer，兜底检测订单是否出现，然后等待 3 秒
 
+        已知问题：仅靠 timer 模板匹配会在匹配失败（阈值/区域/出现时间过短）
+        时永远卡住。这里增加订单出现作为兜底信号，并周期性打印等待状态，
+        避免 "waiting for game start" 无反应且无线索。
+        """
+        logger.info("Waiting for game start (timer/order detection)...")
+
+        waited = 0.0
         while True:
             if await self.scanner.detect_timer():
-                logger.info("Timer detected, waiting 3 seconds...")
+                logger.info("Timer detected, waiting 3 seconds for first orders...")
                 await asyncio.sleep(3)
-                self.env.start_game()
-                self._game_started = True
-                logger.info("Game started!")
-                break
+                self._mark_game_started()
+                return
+
+            # 兜底：timer 未匹配到，但订单已经出现（游戏实际已开始）
+            try:
+                orders = await self.scanner.scan_new_orders()
+            except Exception as e:
+                logger.debug(f"Order scan during wait failed: {e}")
+                orders = []
+            if orders:
+                logger.info(
+                    f"Orders detected ({len(orders)}), treating game as started "
+                    f"(timer not matched)"
+                )
+                self._mark_game_started()
+                return
+
             await asyncio.sleep(0.5)
+            waited += 0.5
+            if int(waited) % 5 == 0:
+                logger.warning(
+                    f"Still waiting for game start... ({int(waited)}s) timer and "
+                    f"orders not detected. Check timer icon asset / timer_region "
+                    f"or that the game has actually begun."
+                )
+
+    def _mark_game_started(self) -> None:
+        self.env.start_game()
+        self._game_started = True
+        logger.info("Game started!")
 
     # ========================================================================
     # 扫描循环

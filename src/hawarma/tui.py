@@ -322,11 +322,11 @@ class ConfigScreen(Screen):
                 with TabPane("屏幕设置", id="screen"):
                     yield Static("屏幕设置", classes="tab-title")
                     yield Input(value=f"{self.config.screen.resolution[0]},{self.config.screen.resolution[1]}", placeholder="分辨率（宽,高）", id="resolution")
-                    yield Checkbox(value=self.config.screen.save_screenshots, label="保存截图", id="save-screenshots")
                 with TabPane("匹配设置", id="matching"):
                     yield Static("匹配设置", classes="tab-title")
                     yield Input(value=self.config.matching.ingredients_strategy[0], placeholder="匹配策略", id="matching-strategy")
                     yield Input(value=str(self.config.matching.ingredients_threshold), placeholder="匹配阈值", id="matching-threshold")
+                    yield Input(value=str(self.config.matching.timer_threshold), placeholder="Timer匹配阈值", id="timer-threshold")
                 with TabPane("游戏设置", id="game"):
                     yield Static("游戏设置", classes="tab-title")
                     yield Input(value=str(self.config.game.cooker_retention), placeholder="灶台保留时间", id="cooker-retention")
@@ -335,6 +335,7 @@ class ConfigScreen(Screen):
                     yield Static("调试设置", classes="tab-title")
                     yield Checkbox(value=self.config.debug.save_order_screenshots, label="保存订单截图", id="save-order-screenshots")
                     yield Checkbox(value=self.config.debug.save_assembly_verify_screenshots, label="保存组装验证截图", id="save-assembly-screenshots")
+                    yield Checkbox(value=self.config.debug.save_timer_screenshots, label="保存Timer检测截图", id="save-timer-screenshots")
             with Horizontal(classes="button-row"):
                 yield Button("保存配置", id="save", variant="primary")
                 yield Button("返回", id="back", variant="default")
@@ -358,11 +359,11 @@ class ConfigScreen(Screen):
         # 屏幕设置
         resolution = self.query_one("#resolution", Input).value.split(",")
         self.config.screen.resolution = (int(resolution[0]), int(resolution[1]))
-        self.config.screen.save_screenshots = self.query_one("#save-screenshots", Checkbox).value
-        
+
         # 匹配设置
         self.config.matching.ingredients_strategy = [self.query_one("#matching-strategy", Input).value]
         self.config.matching.ingredients_threshold = float(self.query_one("#matching-threshold", Input).value)
+        self.config.matching.timer_threshold = float(self.query_one("#timer-threshold", Input).value)
         
         # 游戏设置
         self.config.game.cooker_retention = float(self.query_one("#cooker-retention", Input).value)
@@ -371,6 +372,7 @@ class ConfigScreen(Screen):
         # 调试设置
         self.config.debug.save_order_screenshots = self.query_one("#save-order-screenshots", Checkbox).value
         self.config.debug.save_assembly_verify_screenshots = self.query_one("#save-assembly-screenshots", Checkbox).value
+        self.config.debug.save_timer_screenshots = self.query_one("#save-timer-screenshots", Checkbox).value
         
         # 保存到YAML文件
         save_config(self.config)
