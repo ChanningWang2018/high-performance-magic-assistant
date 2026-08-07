@@ -16,6 +16,7 @@
 | `test_timer_detection.py` | ✅ | Timer 图标模板匹配测试（验证 icon-timer.jpg 在截图中的检测） |
 | `test_rush_detection.py` | ✅ | 加急订单像素检测测试（基于红色通道阈值检测 rush 状态） |
 | `test_assembly_verifier.py` | ✅ | 组装站验证器测试 |
+| `test_i18n.py` | ✅ | i18n 测试（locale 键集合一致性、UI 静态键存在性、各 locale 下 TUI 全屏导航） |
 | `testset/` | ✅ | 测试图片集（包含 normal/rush 订单截图） |
 
 ## 测试覆盖

@@ -15,6 +15,7 @@
 | **桥接层** | [`src/hawarma/game/ARCHITECTURE.md`](src/hawarma/game/ARCHITECTURE.md) | 修改 UI 操作、状态追踪、扫描器、双循环架构 |
 | **服务层** | [`src/hawarma/services/ARCHITECTURE.md`](src/hawarma/services/ARCHITECTURE.md) | 修改配方管理等服务组件 |
 | **工具函数** | [`src/hawarma/utils/ARCHITECTURE.md`](src/hawarma/utils/ARCHITECTURE.md) | 修改图像处理工具 |
+| **多语言** | [`src/hawarma/i18n/ARCHITECTURE.md`](src/hawarma/i18n/ARCHITECTURE.md) | 修改界面文案、新增/调整语言 |
 | **文档** | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | 游戏规则、Agent策略、架构设计 |
 | **测试** | [`tests/ARCHITECTURE.md`](tests/ARCHITECTURE.md) | 添加或修改测试 |
 | **实验** | [`experiments/ARCHITECTURE.md`](experiments/ARCHITECTURE.md) | 运行基准测试、查看实验记录 |
@@ -115,6 +116,7 @@ TUI 提供完整的仪表板界面，包括：
 ```bash
 # 配置文件: configs/config.yaml
 strategy: "gastronome"      # CPM enhanced cascade (默认) 或 "dessert"
+language: "zh-CN"           # 界面语言: zh-CN (默认) 或 en-US；TUI 主菜单可按 L 键运行时切换
 
 # 命令行覆盖
 python -m hawarma --strategy gastronome

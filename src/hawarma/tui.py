@@ -7,6 +7,12 @@ Hawarma TUI - 烹饪游戏自动化 Agent 的文本用户界面
 - 配置面板
 - 游戏控制界面
 - 日志区域
+
+界面文案通过 i18n 目录翻译（zh-CN 默认，en-US 可选），
+引擎日志（runner/agent 的 loguru 输出）保持英文不翻译。
+
+⚠️ 一旦文件内容有更新，务必对开头注释进行相应的必要更新，
+同时更新所属目录的 md（src/hawarma/ARCHITECTURE.md）
 """
 
 import asyncio
@@ -35,6 +41,7 @@ from loguru import logger
 from textual.worker import Worker, WorkerState
 
 from hawarma.config import load_config, save_config
+from hawarma.i18n import get_translator, set_language, supported_languages, t
 from hawarma.recipe import Recipe, Station
 from hawarma.services.recipe_manager import RecipeManager
 from hawarma.device import setup_device
@@ -47,25 +54,45 @@ from textual.widgets._toggle_button import ToggleButton
 ToggleButton.BUTTON_INNER = "✓"
 
 
+def _station_display(station: Station) -> str:
+    """station slug → 本地化显示名（找不到时回退到 slug 本身）"""
+    return t(f"display.station.{station.value}", default=station.value)
+
+
+def _strategy_display(strategy: str) -> str:
+    """策略 slug → 本地化显示名（找不到时回退到 slug 本身）"""
+    return t(f"display.strategy.{strategy}", default=strategy)
+
+
+def _recipe_display(recipe: Recipe) -> str:
+    """recipe slug → 本地化显示名（找不到时回退到数据源英文名）"""
+    return t(f"display.recipe.{recipe.slug}", default=recipe.name)
+
+
 class MainMenuScreen(Screen):
     """主菜单屏幕"""
 
-    BINDINGS = [
-        Binding("q", "quit", "退出"),
-        Binding("r", "recipes", "配方选择"),
-        Binding("c", "config", "配置"),
-        Binding("g", "game", "开始游戏"),
-    ]
+    def __init__(self) -> None:
+        super().__init__()
+        # BINDINGS 在实例化时求值，语言切换后重建屏幕即可刷新 Footer 描述
+        self.BINDINGS = [
+            Binding("q", "quit", t("bindings.quit")),
+            Binding("r", "recipes", t("bindings.recipes")),
+            Binding("c", "config", t("bindings.config")),
+            Binding("g", "game", t("bindings.game")),
+            Binding("l", "language", t("bindings.language")),
+        ]
 
     def compose(self) -> ComposeResult:
         yield Header()
         yield Container(
-            Static("Hawarma - 烹饪游戏自动化 Agent", classes="title"),
-            Static("请选择操作：", classes="subtitle"),
-            Button("☰ 配方选择", id="recipes", variant="primary"),
-            Button("⚙ 配置设置", id="config", variant="default"),
-            Button("▶ 开始游戏", id="game", variant="success"),
-            Button("✕ 退出", id="quit", variant="error"),
+            Static(t("app.title"), classes="title"),
+            Static(t("app.subtitle"), classes="subtitle"),
+            Button(t("menu.recipes"), id="recipes", variant="primary"),
+            Button(t("menu.config"), id="config", variant="default"),
+            Button(t("menu.game"), id="game", variant="success"),
+            Button(t("menu.quit"), id="quit", variant="error"),
+            Button(t("menu.language"), id="language", variant="default"),
             classes="menu-container",
         )
         yield Footer()
@@ -77,6 +104,8 @@ class MainMenuScreen(Screen):
             self.app.push_screen("config")
         elif event.button.id == "game":
             self.app.push_screen("game")
+        elif event.button.id == "language":
+            self.app.toggle_language()
         elif event.button.id == "quit":
             self.app.exit()
 
@@ -88,6 +117,9 @@ class MainMenuScreen(Screen):
 
     def action_game(self) -> None:
         self.app.push_screen("game")
+
+    def action_language(self) -> None:
+        self.app.toggle_language()
 
 
 class RecipeSelectionScreen(Screen):
@@ -108,32 +140,35 @@ class RecipeSelectionScreen(Screen):
 
         yield Header()
         yield Container(
-            Static("☰ 配方选择", classes="title"),
-            Static("1. 选择模式：", classes="subtitle"),
+            Static(t("recipes.title"), classes="title"),
+            Static(t("recipes.step_mode"), classes="subtitle"),
             Select(
-                [("gastronome", "gastronome"), ("dessert", "dessert")],
+                [
+                    (_station_display(Station.GASTRONOME), Station.GASTRONOME.value),
+                    (_station_display(Station.DESSERT), Station.DESSERT.value),
+                ],
                 value=station.value, id="rs-station-select",
             ),
-            Static("2. 选择配方（空格多选）：", classes="subtitle"),
+            Static(t("recipes.step_recipe"), classes="subtitle"),
             SelectionList[str](
-                *[Selection(r.name, r.slug) for r in filtered],
+                *[Selection(_recipe_display(r), r.slug) for r in filtered],
                 id="rs-recipe-list",
             ),
-            Static("3. 准备顺序（留空=默认顺序）：", classes="subtitle"),
+            Static(t("recipes.step_order"), classes="subtitle"),
             Static(id="rs-order-hint", classes="order-hint"),
             Input(
-                placeholder="0 基或 1 基索引均可，长度需等于已选菜谱数",
+                placeholder=t("recipes.order_placeholder"),
                 id="rs-order-input",
                 restrict=r"[0-9]*",
             ),
-            Static("4. 选择策略：", classes="subtitle"),
+            Static(t("recipes.step_strategy"), classes="subtitle"),
             Select(
                 options=strategy_options,
                 value=current_strategy, id="rs-strategy-select",
             ),
             Horizontal(
-                Button("确认开始", id="confirm", variant="primary"),
-                Button("返回", id="back", variant="default"),
+                Button(t("recipes.confirm"), id="confirm", variant="primary"),
+                Button(t("recipes.back"), id="back", variant="default"),
                 classes="button-row",
             ),
             classes="recipe-container",
@@ -147,9 +182,9 @@ class RecipeSelectionScreen(Screen):
     def _strategy_options_for_station(self, station: Station) -> tuple[list[tuple[str, str]], list[str]]:
         """根据 station 返回可用的策略选项列表"""
         if station == Station.GASTRONOME:
-            options = [("gastronome", "gastronome")]
+            options = [(_strategy_display("gastronome"), "gastronome")]
         else:
-            options = [("dessert", "dessert")]
+            options = [(_strategy_display("dessert"), "dessert")]
         return options, [v for _, v in options]
 
     def _resolve_strategy_value(self, strategy_values: list[str]) -> str:
@@ -178,25 +213,14 @@ class RecipeSelectionScreen(Screen):
         order_input.disabled = n < 2
 
         if n == 0:
-            hint.update("请先在上方选择菜谱")
+            hint.update(t("recipes.hint_none"))
         elif n == 1:
-            hint.update(
-                f"当前选择（按显示顺序）：\n"
-                f"  [0] {selected[0].name}\n\n"
-                f"无需指定顺序（只有 1 个菜谱）"
-            )
+            hint.update(t("recipes.hint_single", index=0, name=_recipe_display(selected[0])))
         else:
-            names = "\n".join(f"  [{i}] {r.name}" for i, r in enumerate(selected))
+            names = "\n".join(f"  [{i}] {_recipe_display(r)}" for i, r in enumerate(selected))
             seq0 = "".join(str(i) for i in range(n))
             seq1 = "".join(str(i + 1) for i in range(n))
-            hint.update(
-                f"当前选择（按显示顺序，索引 = 输入数字的对应菜谱）：\n"
-                f"{names}\n\n"
-                f"请输入长度为 {n} 的数字串：\n"
-                f"  - 0 基：'{seq0}' = 按显示顺序\n"
-                f"  - 1 基：'{seq1}' = 按显示顺序\n"
-                f"留空则使用默认顺序"
-            )
+            hint.update(t("recipes.hint_multi", names=names, n=n, seq0=seq0, seq1=seq1))
 
     def _rebuild_recipe_list(self) -> None:
         """根据当前 station 重建菜谱列表"""
@@ -205,7 +229,7 @@ class RecipeSelectionScreen(Screen):
         sl = self.query_one("#rs-recipe-list", SelectionList)
         sl.clear_options()
         for r in filtered:
-            sl.add_option(Selection(r.name, r.slug))
+            sl.add_option(Selection(_recipe_display(r), r.slug))
         self._update_order_hint()
 
     def _rebuild_strategy_options(self) -> None:
@@ -267,24 +291,23 @@ class RecipeSelectionScreen(Screen):
 class OrderInvalidModal(Screen):
     """准备顺序输入非法时的提示 modal"""
 
-    BINDINGS = [Binding("escape", "dismiss_modal", "返回")]
-
     def __init__(self, error: str, selected_recipes: list[Recipe]):
         super().__init__()
         self._error = error
         self._selected_recipes = selected_recipes
+        self.BINDINGS = [Binding("escape", "dismiss_modal", t("bindings.back"))]
 
     def compose(self) -> ComposeResult:
         names = "\n".join(
-            f"  [{i}] {r.name}" for i, r in enumerate(self._selected_recipes)
+            f"  [{i}] {_recipe_display(r)}" for i, r in enumerate(self._selected_recipes)
         )
         yield Container(
-            Static("⚠ 准备顺序输入有误", classes="title"),
+            Static(t("modal.title"), classes="title"),
             Static(self._error, classes="modal-error"),
-            Static(f"已选菜谱（按显示顺序）：\n{names}", classes="modal-info"),
+            Static(t("modal.selected", names=names), classes="modal-info"),
             Horizontal(
-                Button("返回修改", id="back", variant="primary"),
-                Button("忽略并使用默认顺序", id="ignore", variant="warning"),
+                Button(t("modal.back"), id="back", variant="primary"),
+                Button(t("modal.ignore"), id="ignore", variant="warning"),
                 classes="button-row",
             ),
             classes="modal-container",
@@ -310,35 +333,35 @@ class ConfigScreen(Screen):
     def compose(self) -> ComposeResult:
         yield Header()
         with Container(classes="config-container"):
-            yield Static("⚙ 配置设置", classes="title")
+            yield Static(t("config.title"), classes="title")
             with TabbedContent():
-                with TabPane("基本设置", id="basic"):
-                    yield Static("基本设置", classes="tab-title")
-                    yield Input(value=self.config.adb_address, placeholder="ADB 地址 (如 127.0.0.1:16385)", id="adb-address")
-                    yield Input(value=self.config.image_directory, placeholder="图片目录", id="image-directory")
-                    yield Input(value=self.config.log_directory, placeholder="日志目录", id="log-directory")
-                    yield Input(value=self.config.recipes_data_path, placeholder="配方数据路径", id="recipes-data-path")
-                    yield Input(value=str(self.config.episode_duration), placeholder="游戏时长（秒）", id="episode-duration")
-                with TabPane("屏幕设置", id="screen"):
-                    yield Static("屏幕设置", classes="tab-title")
-                    yield Input(value=f"{self.config.screen.resolution[0]},{self.config.screen.resolution[1]}", placeholder="分辨率（宽,高）", id="resolution")
-                with TabPane("匹配设置", id="matching"):
-                    yield Static("匹配设置", classes="tab-title")
-                    yield Input(value=self.config.matching.ingredients_strategy[0], placeholder="匹配策略", id="matching-strategy")
-                    yield Input(value=str(self.config.matching.ingredients_threshold), placeholder="匹配阈值", id="matching-threshold")
-                    yield Input(value=str(self.config.matching.timer_threshold), placeholder="Timer匹配阈值", id="timer-threshold")
-                with TabPane("游戏设置", id="game"):
-                    yield Static("游戏设置", classes="tab-title")
-                    yield Input(value=str(self.config.game.cooker_retention), placeholder="灶台保留时间", id="cooker-retention")
-                    yield Input(value=str(self.config.game.rush_red_threshold), placeholder="Rush红色阈值", id="rush-threshold")
-                with TabPane("调试设置", id="debug"):
-                    yield Static("调试设置", classes="tab-title")
-                    yield Checkbox(value=self.config.debug.save_order_screenshots, label="保存订单截图", id="save-order-screenshots")
-                    yield Checkbox(value=self.config.debug.save_assembly_verify_screenshots, label="保存组装验证截图", id="save-assembly-screenshots")
-                    yield Checkbox(value=self.config.debug.save_timer_screenshots, label="保存Timer检测截图", id="save-timer-screenshots")
+                with TabPane(t("config.tab_basic"), id="basic"):
+                    yield Static(t("config.tab_basic"), classes="tab-title")
+                    yield Input(value=self.config.adb_address, placeholder=t("config.placeholder_adb"), id="adb-address")
+                    yield Input(value=self.config.image_directory, placeholder=t("config.placeholder_image"), id="image-directory")
+                    yield Input(value=self.config.log_directory, placeholder=t("config.placeholder_log"), id="log-directory")
+                    yield Input(value=self.config.recipes_data_path, placeholder=t("config.placeholder_recipes_data"), id="recipes-data-path")
+                    yield Input(value=str(self.config.episode_duration), placeholder=t("config.placeholder_duration"), id="episode-duration")
+                with TabPane(t("config.tab_screen"), id="screen"):
+                    yield Static(t("config.tab_screen"), classes="tab-title")
+                    yield Input(value=f"{self.config.screen.resolution[0]},{self.config.screen.resolution[1]}", placeholder=t("config.placeholder_resolution"), id="resolution")
+                with TabPane(t("config.tab_matching"), id="matching"):
+                    yield Static(t("config.tab_matching"), classes="tab-title")
+                    yield Input(value=self.config.matching.ingredients_strategy[0], placeholder=t("config.placeholder_matching_strategy"), id="matching-strategy")
+                    yield Input(value=str(self.config.matching.ingredients_threshold), placeholder=t("config.placeholder_threshold"), id="matching-threshold")
+                    yield Input(value=str(self.config.matching.timer_threshold), placeholder=t("config.placeholder_timer_threshold"), id="timer-threshold")
+                with TabPane(t("config.tab_game"), id="game"):
+                    yield Static(t("config.tab_game"), classes="tab-title")
+                    yield Input(value=str(self.config.game.cooker_retention), placeholder=t("config.placeholder_cooker_retention"), id="cooker-retention")
+                    yield Input(value=str(self.config.game.rush_red_threshold), placeholder=t("config.placeholder_rush_threshold"), id="rush-threshold")
+                with TabPane(t("config.tab_debug"), id="debug"):
+                    yield Static(t("config.tab_debug"), classes="tab-title")
+                    yield Checkbox(value=self.config.debug.save_order_screenshots, label=t("config.label_save_orders"), id="save-order-screenshots")
+                    yield Checkbox(value=self.config.debug.save_assembly_verify_screenshots, label=t("config.label_save_assembly"), id="save-assembly-screenshots")
+                    yield Checkbox(value=self.config.debug.save_timer_screenshots, label=t("config.label_save_timer"), id="save-timer-screenshots")
             with Horizontal(classes="button-row"):
-                yield Button("保存配置", id="save", variant="primary")
-                yield Button("返回", id="back", variant="default")
+                yield Button(t("config.save"), id="save", variant="primary")
+                yield Button(t("config.back"), id="back", variant="default")
         yield Footer()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -385,21 +408,20 @@ class GameControlScreen(Screen):
         super().__init__()
         self.config = config
         self.game_worker = None
-
-    BINDINGS = [
-        Binding("escape", "back", "返回"),
-        Binding("r", "recipes", "配方"),
-        Binding("c", "config", "配置"),
-    ]
+        self.BINDINGS = [
+            Binding("escape", "back", t("bindings.back")),
+            Binding("r", "recipes", t("bindings.recipes")),
+            Binding("c", "config", t("bindings.config")),
+        ]
 
     def compose(self) -> ComposeResult:
         yield Header()
         yield Container(
-            Static("▶ 游戏控制", classes="title"),
+            Static(t("game.title"), classes="title"),
             Horizontal(
-                Button("▶ 开始游戏", id="start", variant="success"),
-                Button("■ 停止游戏", id="stop", variant="error", disabled=True),
-                Button("返回", id="back", variant="default"),
+                Button(t("game.start"), id="start", variant="success"),
+                Button(t("game.stop"), id="stop", variant="error", disabled=True),
+                Button(t("game.back"), id="back", variant="default"),
                 classes="button-row",
             ),
             Log(id="game-log", auto_scroll=True),
@@ -429,15 +451,24 @@ class GameControlScreen(Screen):
         self.query_one("#stop", Button).disabled = False
 
         log = self.query_one("#game-log", Log)
-        log.write_line(f"Station: {self.app.station.value}, Strategy: {self.app.game_strategy or self.config.strategy}\n")
-        log.write_line("正在连接设备...\n")
-        
+        log.write_line(
+            t(
+                "game.station_summary",
+                station=_station_display(self.app.station),
+                strategy=_strategy_display(
+                    self.app.game_strategy or self.config.strategy
+                ),
+            )
+            + "\n"
+        )
+        log.write_line(t("game.connecting_device") + "\n")
+
         try:
             setup_device(self.config.adb_address)
             apply_patch()
-            log.write_line("设备连接成功\n")
+            log.write_line(t("game.device_connected") + "\n")
         except Exception as e:
-            log.write_line(f"设备连接失败: {e}\n")
+            log.write_line(t("game.device_connect_failed", error=str(e)) + "\n")
             self.query_one("#start", Button).disabled = False
             self.query_one("#stop", Button).disabled = True
             return
@@ -464,14 +495,14 @@ class GameControlScreen(Screen):
         
         try:
             if not self.app.selected_recipes:
-                log.write_line("错误：请先选择配方！\n")
+                log.write_line(t("game.no_recipes") + "\n")
                 return
             
             recipes = self.app.selected_recipes
             recipes_dict = {r.slug: r for r in recipes}
             strategy_name = self.app.game_strategy or self.config.strategy
             strategy = get_strategy(strategy_name)
-            log.write_line(f"使用策略: {strategy_name}\n")
+            log.write_line(t("game.using_strategy", strategy=_strategy_display(strategy_name)) + "\n")
             
             # DI 组装
             station = self.app.station
@@ -490,27 +521,27 @@ class GameControlScreen(Screen):
             bridge = Runner(env, operator, scanner, verifier, strategy, recipes_dict)
             
             log.write_line("=" * 40 + "\n")
-            log.write_line("游戏运行中... 设备扫描已启动\n")
-            log.write_line(f"Recipes: {[r.name for r in recipes]}\n")
-            log.write_line(f"Cookers: {cooker_names}\n")
+            log.write_line(t("game.scan_started") + "\n")
+            log.write_line(t("game.recipes_line", names=str([_recipe_display(r) for r in recipes])) + "\n")
+            log.write_line(t("game.cookers_line", names=str(cooker_names)) + "\n")
             log.write_line("=" * 40 + "\n")
             
             # 运行游戏
             stats = await bridge.run()
             
             log.write_line("=" * 40 + "\n")
-            log.write_line("Game over!\n")
-            log.write_line(f"  Time:        {stats['time']:.1f}s\n")
-            log.write_line(f"  Orders done: {stats['orders_served']}\n")
-            log.write_line(f"  Score:       {stats['total_score']}\n")
-            log.write_line(f"  Timed out:   {stats['orders_timeout']}\n")
-            log.write_line(f"  Actions:     {stats['actions_taken']}\n")
+            log.write_line(t("game.game_over") + "\n")
+            log.write_line(t("game.stat_time", value=f"{stats['time']:.1f}") + "\n")
+            log.write_line(t("game.stat_orders", value=stats['orders_served']) + "\n")
+            log.write_line(t("game.stat_score", value=stats['total_score']) + "\n")
+            log.write_line(t("game.stat_timed_out", value=stats['orders_timeout']) + "\n")
+            log.write_line(t("game.stat_actions", value=stats['actions_taken']) + "\n")
             log.write_line("=" * 40 + "\n")
             
         except asyncio.CancelledError:
-            log.write_line("游戏被用户中止\n")
+            log.write_line(t("game.cancelled") + "\n")
         except Exception as e:
-            log.write_line(f"游戏错误: {e}\n")
+            log.write_line(t("game.error", error=str(e)) + "\n")
 
     def stop_game(self) -> None:
         if hasattr(self, '_tui_sink_id'):
@@ -526,7 +557,7 @@ class GameControlScreen(Screen):
         self.query_one("#stop", Button).disabled = True
         
         log = self.query_one("#game-log", Log)
-        log.write_line("正在中止游戏...\n")
+        log.write_line(t("game.stopping") + "\n")
 
     def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
         """Worker 状态变化时更新 UI"""
@@ -647,19 +678,46 @@ class HawarmaApp(App):
         self.theme = "catppuccin-frappe"
         setup_logging(terminal=False, log_name="tui")
         self.config = load_config()
+        set_language(self.config.language)
+        self.title = t("app.title")
         self.recipe_manager = RecipeManager()
         self.selected_recipes: list[Recipe] = []
         self.station: Station = Station.GASTRONOME
         self.game_strategy: str | None = None
 
-    def on_mount(self) -> None:
-        # 注册屏幕
+    def _install_screens(self) -> None:
+        """注册全部屏幕（以当前语言实例化）"""
         self.install_screen(MainMenuScreen(), name="main")
         self.install_screen(RecipeSelectionScreen(self.recipe_manager), name="recipes")
         self.install_screen(ConfigScreen(self.config), name="config")
         self.install_screen(GameControlScreen(self.config), name="game")
-        
-        # 显示主菜单
+
+    def on_mount(self) -> None:
+        self._install_screens()
+        self.push_screen("main")
+
+    def toggle_language(self) -> None:
+        """循环切换界面语言并重建屏幕"""
+        languages = supported_languages()
+        current = get_translator().language
+        if current not in languages:
+            current = languages[0]
+        next_lang = languages[(languages.index(current) + 1) % len(languages)]
+        set_language(next_lang)
+        self.config.language = next_lang
+        save_config(self.config)
+        self.title = t("app.title")
+        self._reinstall_screens()
+
+    def _reinstall_screens(self) -> None:
+        """以新语言重建屏幕（仅在主菜单调用；会丢弃旧 GameControl 屏幕状态，请在游戏停止后切换）"""
+        # Textual 8: uninstall 会拒绝仍在屏幕栈中的屏，必须先弹出
+        while self.screen in self._installed_screens.values():
+            self.pop_screen()
+        for name in ("main", "recipes", "config", "game"):
+            if name in self._installed_screens:
+                self.uninstall_screen(name)
+        self._install_screens()
         self.push_screen("main")
 
 

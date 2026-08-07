@@ -87,6 +87,15 @@
 - **文件**:
   - `recipe_manager.py`: 从 JSON 加载配方数据，按 slug 查询
 
+### `i18n/` 子目录
+- **地位**: 多语言支持（TUI / CLI 界面文案翻译）
+- **文件**:
+  - `translator.py`: Translator 类 + 全局翻译器，key→文本 + `{var}` 插值
+  - `locales/zh-CN.json`, `locales/en-US.json`: 翻译目录（zh-CN 默认）
+- **约定**: 只翻译 UI 文案，引擎日志（runner/agent 的 loguru 输出）保持英文；
+  数据标识符 slug 不翻译，仅通过 `display.*` 映射显示名
+- **入口**: `config.language` 指定语言；TUI 主菜单可运行时切换
+
 ### `utils/` 子目录
 - **地位**: 工具函数
 - **文件**:
