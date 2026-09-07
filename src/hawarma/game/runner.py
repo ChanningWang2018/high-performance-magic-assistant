@@ -20,6 +20,7 @@ from airtest.core.api import G
 from loguru import logger
 
 from hawarma.core.models import Order
+from hawarma.core.actions import Action, schedule_actions
 from hawarma.agent.strategy import Strategy
 from hawarma.recipe import Recipe
 
@@ -387,8 +388,18 @@ class Runner:
     # 动作执行
     # ========================================================================
 
-    async def _execute_action(self, action) -> None:
-        """执行 Agent 动作（dispatch table 分发）"""
+    async def _execute_action(self, action: Action) -> None:
+        """执行 Agent 动作（dispatch table 分发）
+
+        已取消的动作直接跳过：无 UI 调用、无状态变化（Ticket #11）。
+        默认 cancelled=False，既有策略行为不变。
+        """
+        if action.cancelled:
+            logger.info(
+                f"[t={self.env.time:.1f}s] Skipping cancelled action: {action.action_type}"
+            )
+            return
+
         if not hasattr(self, '_is_game_over'):
             self._is_game_over = self.env.is_game_over
         if self.env.is_game_over():
@@ -426,6 +437,17 @@ class Runner:
             "ServeFromCookerAction": "_exec_serve_from_cooker",
             "ClearMixingBowlAction": "_exec_clear_mixing_bowl",
         }
+
+    async def dispatch_batch(self, actions: list[Action]) -> list[Action]:
+        """批量分发：按共享调度排序后逐个执行，返回实际调度的动作.
+
+        与 SimEnv.run_action_sequence 同调 schedule_actions，
+        同一序列两端执行顺序与取消语义一致（Ticket #11）。
+        """
+        scheduled = schedule_actions(actions)
+        for action in scheduled:
+            await self._execute_action(action)
+        return scheduled
 
     async def _exec_cook(self, action) -> None:
         """烹饪"""

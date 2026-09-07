@@ -21,6 +21,7 @@ from .actions import (
     MoveMixingBowlToCookerAction,
     ServeFromCookerAction,
     ClearMixingBowlAction,
+    schedule_actions,
 )
 from .state import UnifiedState
 from .models import CookerState, AssemblyState, MixingBowlState, StockpileSlot, Order
@@ -41,6 +42,7 @@ __all__ = [
     "MoveMixingBowlToCookerAction",
     "ServeFromCookerAction",
     "ClearMixingBowlAction",
+    "schedule_actions",
     "UnifiedState",
     "CookerState",
     "AssemblyState",

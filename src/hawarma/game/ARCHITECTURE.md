@@ -96,6 +96,8 @@ Operator根据菜谱选择顺序动态确定各元素坐标：
   - 运行三个并行循环（scan / timeout / agent）并执行 Agent 动作
   - **事件驱动决策**：`_agent_loop()` 由 `_agent_wakeup` 事件唤醒，空闲时 0.5s 兜底
   - **送餐验证重试**：`_serve_with_verify()` 带分段耗时打点（验证等待 / 截图 / 重试 / 清理）
+  - **Action 调度**：`dispatch_batch()` 经共享 `schedule_actions` 排序/过滤后逐个 `_execute_action()`；
+    已取消动作直接跳过（Ticket #11 / Spec #7 S3），与 SimEnv 回放语义一致
   - **异步扫描**：`_sync_orders_from_scan()` 为 async 方法，await scanner 的异步截图
 - **输入**: 配置对象、配方列表
 - **输出**: 游戏统计结果（含 scoring 统计与 execution timing）
@@ -131,7 +133,7 @@ Runner.step()
     ↓
 Action
     ↓
-Runner._execute_action()
+Runner._execute_action()（已取消直接跳过，无 UI 调用、无状态变化）
     ↓
 Operator.swipe()
     ↓

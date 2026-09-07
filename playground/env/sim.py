@@ -31,6 +31,7 @@ from hawarma.core.actions import (
     ServeOrderAction,
     ClearCookerAction,
     ClearAssemblyAction,
+    schedule_actions,
 )
 from hawarma.core.models import Order
 from playground.env_simulator import GameSimulator
@@ -149,6 +150,11 @@ class SimEnv(GameEnv):
 
         prev_state = self.get_unified_state()
 
+        # 已取消的动作视为等待：不执行、不计动作数，只推进时间（Ticket #11）。
+        # 默认 cancelled=False，既有策略行为不变。
+        if action is not None and action.cancelled:
+            action = None
+
         # 1. 执行动作（如果提供了）
         action_events: list[Event] = []
         action_success = True
@@ -206,6 +212,14 @@ class SimEnv(GameEnv):
             truncated=truncated,
             info=info,
         )
+
+    def run_action_sequence(self, actions: list[Action]) -> list[StepResult]:
+        """按 Action 序列直调：与 Runner.dispatch_batch 同调度语义.
+
+        先经共享 schedule_actions 排序/过滤，再逐个 step。
+        用于双端回放一致性验证（Ticket #11）。
+        """
+        return [self.step(action) for action in schedule_actions(list(actions))]
 
     def get_unified_state(self) -> UnifiedState:
         """从 simulator 内部状态构造 UnifiedState"""

@@ -18,6 +18,7 @@
 | `test_assembly_verifier.py` | ✅ | 组装站验证器测试 |
 | `test_i18n.py` | ✅ | i18n 测试（locale 键集合一致性、UI 静态键存在性、各 locale 下 TUI 全屏导航） |
 | `test_execution_timing.py` | ✅ | 执行耗时观测 + SrvGap/Idle 分布直方图测试（Ticket #9：分段耗时聚合、动画窗口剩余、SrvGap/Idle 分桶守恒） |
+| `test_action_dispatch.py` | ✅ | Action 调度表达与双端对齐测试（Ticket #11：类型/优先级/取消、共享调度、Runner 跳过取消、SimEnv 直调序列、双端回放终局一致） |
 | `testset/` | ✅ | 测试图片集（包含 normal/rush 订单截图） |
 
 ## 测试覆盖
