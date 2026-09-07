@@ -182,22 +182,24 @@ order_score = (base_points + visibility) * multiplier(spawned_at_visibility, is_
 ### 实现机制
 
 1. **`Order.spawned_at_visibility`** (`core/models.py:Order`)：新增字段，`immutable since creation` —— 通过 `__setattr__` 重写阻止二次赋值，确保域语义「生成瞬间快照」不被破坏。
-2. **`GameEnv.add_order()`**：每次新增订单时，把当前 `_total_visibility` 写入 `order.spawned_at_visibility`。
-3. **`GameEnv._total_visibility`**：局内累计 visibility，每次 `on_order_served` 加上该订单的 visibility（来自 `get_visibility(recipe, has_condiments)`）。
+2. **`GameEnv.add_order()`**：每次新增订单时，把当前 `_scoring.total_visibility` 写入 `order.spawned_at_visibility`。
+3. **`ScoringContext`** (`core/scoring.py`，S1 抽离)：统计查询、总分、终局结算的唯一持有者。`GameEnv` 只转发（`_orders_served/_total_score/_total_visibility` 为兼容属性），改计分只碰此处。
 4. **`GameEnv.on_order_served(order, has_condiments)`**：
    - `score = RecipeRewardLookup.get_score(order.recipe_slug, has_condiments, order.is_rush, total_visibility=order.spawned_at_visibility)`
-   - `_total_score += score`；`_total_visibility += get_visibility(...)`
-5. **`Runner._exec_serve_order()` / `_exec_serve_from_cooker()`**：在 `env.serve_order` 清空 assembly 之前用 `env.assembly.condiments` 读取 `has_condiments`，然后调用 `env.on_order_served(order, has_condiments)`。甜点单食材直送（`serve_from_cooker`）时 `has_condiments=False`。
+   - `_scoring.record_serve(score, get_visibility(...))`
+5. **`GameEnv.finalize()`**（幂等）：`final_score = total_score + total_visibility`；`get_stats()` 同时返回 `total_score`（逐单和）、`total_visibility`、`final_score`、`scoring_version`。
+6. **`Runner._exec_serve_order()` / `_exec_serve_from_cooker()`**：在 `env.serve_order` 清空 assembly 之前用 `env.assembly.condiments` 读取 `has_condiments`，然后调用 `env.on_order_served(order, has_condiments)`。甜点单食材直送（`serve_from_cooker`）时 `has_condiments=False`。
+7. **`Runner._sync_orders_from_scan()`**：扫描新建订单时同样锁定 `spawned_at_visibility=_scoring.total_visibility`（与 `add_order` 同语义）；`run()` 返回前先 `finalize()`。
 
 ### 与模拟器的差异
 
 | 方面 | 模拟器 | 真实环境 |
 |------|--------|----------|
-| spawned_at_visibility 存储 | `sim._order_visibility: dict[int, float]` | `order.spawned_at_visibility`（域字段） |
-| total_visibility 累加 | `state.total_visibility` | `env._total_visibility` |
-| 终局 total_visibility 加分 | 暂未实现 | 暂未实现（与模拟器保持一致） |
+| spawned_at_visibility 存储 | `order.spawned_at_visibility`（域字段为准，`_order_visibility` 字典仅兼容回退） | `order.spawned_at_visibility`（域字段） |
+| total_visibility 累加 | `state.total_visibility`（+ `_total_score` 逐单和） | `ScoringContext.total_visibility`（+ `total_score` 逐单和） |
+| 终局 total_visibility 加分 | `finalize()` 幂等：`_total_score + state.total_visibility`（v2） | `finalize()` 幂等：`total_score + total_visibility`（v2） |
 
-注意：当前**两端都不实现**「游戏结束时把 _total_visibility 加到 _total_score」这一步 —— 见 `docs/game_rules.md:226` 描述但 `env_simulator.py:1206` 也未加。保持一致以免破坏现有 benchmark 分数基准。
+终局口径 `v2 = 逐单和 + 总 visibility`（`docs/game_rules.md:226`），`scoring_version` 随 Episode/基准 CSV/JSON 隔离展示（v1=历史逐单和口径）。
 
 ## 与模拟器的区别
 
