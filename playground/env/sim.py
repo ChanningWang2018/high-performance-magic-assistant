@@ -39,6 +39,7 @@ from hawarma.recipe import Recipe
 
 from .game_env import GameEnv
 from .reward import RewardFunction, GameDataReward, StepResult
+from hawarma.core.scoring import SCORING_VERSION, ScoringContext
 from hawarma.core.state import UnifiedState
 
 
@@ -74,11 +75,8 @@ class SimEnv(GameEnv):
         self._sim: GameSimulator | None = None
         self._recipes: dict[str, Recipe] = {}
 
-        # 统计
-        self._orders_served = 0
-        self._total_score = 0
-        self._orders_timeout = 0
-        self._actions_taken = 0
+        # 度量上下文（统计查询、总分、终局结算唯一持有者；S1 抽离）
+        self._scoring = ScoringContext()
 
     # ------------------------------------------------------------------
     # RL 接口
@@ -119,6 +117,9 @@ class SimEnv(GameEnv):
         self._recipes: dict[str, Recipe] = {
             slug: self._sim._recipes[slug] for slug in recipe_slugs if slug in self._sim._recipes
         }
+
+        # 新一局：重置度量上下文
+        self._scoring = ScoringContext()
 
         # 初始 tick（推进 0 秒，生成初始事件如第一个订单）
         # 实际上 setup_from_recipes 后需要至少一次 tick 才能看到第一个订单
@@ -172,6 +173,19 @@ class SimEnv(GameEnv):
 
         # 5. 计算奖励
         reward = self.reward_fn.compute(prev_state, action, next_state, all_events)
+
+        # 5b. 度量：从事件同步统计（serve 计分 + 超时 + 动作），只观测不改行为.
+        # 事件即模拟器自身输出（serve_order 同步累加 _total_score 处同源），无漂移.
+        for event in all_events:
+            if event.event_type == EventType.ORDER_SERVED:
+                self._scoring.record_serve(
+                    float(event.details.get("score", 0.0)),
+                    float(event.details.get("visibility", 0.0)),
+                )
+            elif event.event_type == EventType.ORDER_TIMEOUT:
+                self._scoring.record_timeout()
+        if action is not None:
+            self._scoring.record_action()
 
         # 6. 判断结束
         terminated = self._sim.is_game_over()
@@ -228,23 +242,24 @@ class SimEnv(GameEnv):
     # ====================================================================
 
     def get_stats(self) -> dict:
+        stats = self._scoring.get_stats()
         return {
             "time": self.get_unified_state().time if self._sim else 0.0,
-            "orders_served": self._orders_served,
-            "total_score": self._total_score,
-            "orders_timeout": self._orders_timeout,
-            "actions_taken": self._actions_taken,
+            **stats,
         }
 
-    def on_order_served(self, score: int = 1) -> None:
-        self._orders_served += 1
-        self._total_score += score
+    def finalize(self) -> float:
+        """终局结算（幂等）：总分 = 订单得分和 + 总 visibility."""
+        return self._scoring.finalize()
+
+    def on_order_served(self, score: float = 1, visibility: float = 0.0) -> None:
+        self._scoring.record_serve(score, visibility)
 
     def on_order_timeout(self, order_id: int) -> None:
-        self._orders_timeout += 1
+        self._scoring.record_timeout()
 
     def on_action_taken(self) -> None:
-        self._actions_taken += 1
+        self._scoring.record_action()
 
     # ------------------------------------------------------------------
     # 动作执行

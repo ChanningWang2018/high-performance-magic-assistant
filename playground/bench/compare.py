@@ -19,6 +19,19 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from playground.core.episode import EpisodeResult
 
+from hawarma.core.scoring import LEGACY_SCORING_VERSION
+
+
+def _result_version(r: EpisodeResult) -> str:
+    """口径版本回退（旧数据无该字段时视为 v1）."""
+    return getattr(r, "scoring_version", LEGACY_SCORING_VERSION)
+
+def _result_final(r: EpisodeResult) -> float:
+    return getattr(r, "final_score", r.total_reward)
+
+def _result_visibility(r: EpisodeResult) -> float:
+    return getattr(r, "total_visibility", 0.0)
+
 
 @dataclass
 class StrategyStats:
@@ -31,6 +44,8 @@ class StrategyStats:
     avg_actions: float
     max_reward: float
     min_reward: float
+    scoring_version: str = LEGACY_SCORING_VERSION
+    """计分口径版本（新旧基准隔离展示）"""
     # 效率指标（有 metrics 的游戏才统计）
     avg_idle_ratio: float = 0.0
     avg_expired: float = 0.0
@@ -48,6 +63,8 @@ def compute_stats(results: list[EpisodeResult]) -> StrategyStats:
     rewards = [r.total_reward for r in results]
     steps = [r.steps for r in results]
     actions = [r.actions_taken for r in results]
+    versions = {_result_version(r) for r in results}
+    scoring_version = next(iter(versions)) if len(versions) == 1 else "mixed"
 
     # 效率指标
     has_metrics = any(r.metrics is not None for r in results)
@@ -71,6 +88,7 @@ def compute_stats(results: list[EpisodeResult]) -> StrategyStats:
             avg_actions=mean(actions),
             max_reward=max(rewards),
             min_reward=min(rewards),
+            scoring_version=scoring_version,
             avg_idle_ratio=mean(idle_ratios),
             avg_expired=mean(expireds),
             avg_clear_asm=mean(clear_asms),
@@ -91,6 +109,7 @@ def compute_stats(results: list[EpisodeResult]) -> StrategyStats:
         avg_actions=mean(actions),
         max_reward=max(rewards),
         min_reward=min(rewards),
+        scoring_version=scoring_version,
     )
 
 
@@ -142,6 +161,9 @@ def print_comparison(results: dict[str, list[EpisodeResult]]) -> None:
 
     print("\n" + "=" * 80)
     print("Benchmark Results")
+    versions = {s.scoring_version for s in stats.values()}
+    print(f"Scoring version: {','.join(sorted(versions))} "
+          f"(v1=sum only, v2=sum+final visibility)")
     print("=" * 80)
 
     # 表头
@@ -204,13 +226,17 @@ def export_csv(results: dict[str, list[EpisodeResult]], filepath: str) -> None:
     with open(path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         header = ["strategy", "seed", "reward", "steps", "actions",
+                  "final_score", "total_visibility", "scoring_version",
                   "idle_ratio", "expired", "clear_asm", "serve_gap",
                   "none_ratio", "stockpile_in", "stockpile_out", "stockpile_max"]
         writer.writerow(header)
         for name, rs in results.items():
             for r in rs:
                 m = r.metrics
-                row = [name, r.seed, r.total_reward, r.steps, r.actions_taken]
+                row = [name, r.seed, r.total_reward, r.steps, r.actions_taken,
+                       _result_final(r),
+                       _result_visibility(r),
+                       _result_version(r)]
                 if m:
                     row.extend([
                         round(m.cooker_idle_ratio, 3),
@@ -246,11 +272,15 @@ def export_json(results: dict[str, list[EpisodeResult]], filepath: str) -> None:
                 "min_reward": stats.min_reward,
                 "avg_steps": stats.avg_steps,
                 "avg_actions": stats.avg_actions,
+                "scoring_version": stats.scoring_version,
             },
             "games": [
                 {
                     "seed": r.seed,
                     "reward": r.total_reward,
+                    "final_score": _result_final(r),
+                    "total_visibility": _result_visibility(r),
+                    "scoring_version": _result_version(r),
                     "steps": r.steps,
                     "actions": r.actions_taken,
                 }

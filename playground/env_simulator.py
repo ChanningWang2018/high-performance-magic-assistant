@@ -39,6 +39,7 @@ from .env_simulator_types import (
     GameConfig,
 )
 from hawarma.core.reward import RecipeRewardLookup, RecipeTimeoutLookup
+from hawarma.core.scoring import finalize_score
 
 
 # ============================================================================
@@ -196,10 +197,43 @@ class GameSimulator:
         self._order_recipes: dict[int, Recipe] = {}
         self._order_condiments: dict[int, dict[str, int]] = {}
         self._order_visibility: dict[int, float] = {}
+        """快照旁路字典（兼容保留）：与 Order.spawned_at_visibility 同值，
+        计分以 Order 域字段为准，字典仅作回退."""
+
+        # 终局计分（S1）：逐单得分和 + 总 visibility，幂等结算。
+        # visibility 真源是 _state.total_visibility（向 agent 暴露的状态）；
+        # 终局算术与真实端共用 hawarma.core.scoring.finalize_score。
+        self._total_score: float = 0.0
+        self._orders_served: int = 0
+        self._finalized: bool = False
+        self._final_score: float = 0.0
     
     def _get_recipe(self, order: Order) -> Recipe:
         """获取订单对应的配方对象（模拟器内部数据）"""
         return self._order_recipes[order.order_id]
+
+    def _snapshot_visibility(self, order: Order) -> float:
+        """订单生成时可见度快照.
+
+        新订单创建时域字段与旁路字典同值双写；老订单（域字段缺省 0.0）
+        回退读字典，保证两端同语义.
+        """
+        return self._order_visibility.get(order.order_id, order.spawned_at_visibility)
+
+    def finalize(self) -> float:
+        """终局结算（幂等）：逐单得分和 + 总 visibility."""
+        if not self._finalized:
+            self._final_score = finalize_score(
+                self._total_score, self._state.total_visibility
+            )
+            self._finalized = True
+        return self._final_score
+
+    def get_final_score(self) -> float:
+        """终局分数（finalize 缓存或实时计算，查询无副作用叠加）."""
+        if self._finalized:
+            return self._final_score
+        return finalize_score(self._total_score, self._state.total_visibility)
     
     # ------------------------------------------------------------------
     # 配置和初始化
@@ -495,7 +529,7 @@ class GameSimulator:
                 f"Slot {slot_idx} is already occupied"
             )
         
-        # 创建订单
+        # 创建订单（生成瞬间锁定当前总 visibility，与真实端同语义）
         timeout = self._calculate_timeout(recipe, is_rush)
         order = Order(
             order_id=self._next_order_id,
@@ -503,6 +537,7 @@ class GameSimulator:
             is_rush=is_rush,
             created_at=self._state.time,
             timeout_at=self._state.time + timeout,
+            spawned_at_visibility=self._state.total_visibility,
         )
         
         # 存储模拟器专有数据
@@ -1178,6 +1213,9 @@ class GameSimulator:
         has_condiments = bool(assembly_condiments)
         visibility = self._reward_lookup.get_visibility(recipe.slug, has_condiments)
         self._state.total_visibility += visibility
+        # 终局计分：累加逐单得分和（finalize 时 +总 visibility）
+        self._total_score += score
+        self._orders_served += 1
         
         # 标记订单完成
         order.served_at = self._state.time
@@ -1202,7 +1240,7 @@ class GameSimulator:
                 'score': score,
                 'served_at': order.served_at,
                 'visibility': visibility,
-                'spawned_at_visibility': self._order_visibility.get(order.order_id, 0.0),
+                'spawned_at_visibility': self._snapshot_visibility(order),
             }
         )
         
@@ -1252,7 +1290,7 @@ class GameSimulator:
             recipe_slug,
             has_condiments=has_condiments,
             is_rush=order.is_rush,
-            total_visibility=self._order_visibility.get(order.order_id, 0.0),
+            total_visibility=self._snapshot_visibility(order),
         )
     
     def _advance_slots(self, current_time: float) -> None:
@@ -1495,13 +1533,14 @@ class GameSimulator:
         # 计算超时时间（基于recipe）
         timeout = self._calculate_timeout(recipe, is_rush)
         
-# 创建订单
+# 创建订单（生成瞬间锁定当前总 visibility，与真实端同语义）
         order = Order(
             order_id=self._next_order_id,
             recipe_slug=recipe.slug,
             is_rush=is_rush,
             created_at=created_at,
             timeout_at=created_at + timeout,
+            spawned_at_visibility=self._state.total_visibility,
         )
         
         # 存储模拟器专有数据

@@ -24,6 +24,7 @@ from hawarma.core.models import (
     StockpileSlot,
 )
 from hawarma.core.reward import RecipeRewardLookup
+from hawarma.core.scoring import ScoringContext
 from hawarma.recipe import Recipe, Station
 
 
@@ -65,12 +66,8 @@ class GameEnv:
         # 配方数据（用于校验组装站操作）
         self._recipes = recipes or {}
 
-        # 统计
-        self._orders_served = 0
-        self._total_score = 0
-        self._total_visibility: float = 0.0
-        self._orders_timeout = 0
-        self._actions_taken = 0
+        # 度量上下文（统计查询、总分、终局结算唯一持有者；S1 抽离）
+        self._scoring = ScoringContext()
 
         # 得分查表（lazy init 在 on_order_served 中需要时再创建，
         # 避免 GameEnv 在 unit test 中加载 CSV）
@@ -79,6 +76,53 @@ class GameEnv:
         logger.info(
             f"GameEnv initialized: {len(cooker_names)} cookers, {stockpile_slots} stockpile slots"
         )
+
+    # ========================================================================
+    # 度量兼容访问（S1 抽离过渡期：读写转发到 ScoringContext）
+    # ========================================================================
+
+    @property
+    def _orders_served(self) -> int:
+        return self._scoring.orders_served
+
+    @_orders_served.setter
+    def _orders_served(self, value: int) -> None:
+        self._scoring.orders_served = value
+        self._scoring.invalidate()
+
+    @property
+    def _total_score(self) -> float:
+        return self._scoring.total_score
+
+    @_total_score.setter
+    def _total_score(self, value: float) -> None:
+        self._scoring.total_score = value
+        self._scoring.invalidate()
+
+    @property
+    def _total_visibility(self) -> float:
+        return self._scoring.total_visibility
+
+    @_total_visibility.setter
+    def _total_visibility(self, value: float) -> None:
+        self._scoring.total_visibility = value
+        self._scoring.invalidate()
+
+    @property
+    def _orders_timeout(self) -> int:
+        return self._scoring.orders_timeout
+
+    @_orders_timeout.setter
+    def _orders_timeout(self, value: int) -> None:
+        self._scoring.orders_timeout = value
+
+    @property
+    def _actions_taken(self) -> int:
+        return self._scoring.actions_taken
+
+    @_actions_taken.setter
+    def _actions_taken(self, value: int) -> None:
+        self._scoring.actions_taken = value
 
     # ========================================================================
     # Env 接口实现
@@ -473,13 +517,15 @@ class GameEnv:
         )
 
     def get_stats(self) -> dict:
+        stats = self._scoring.get_stats()
         return {
             "time": self.time,
-            "orders_served": self._orders_served,
-            "total_score": self._total_score,
-            "orders_timeout": self._orders_timeout,
-            "actions_taken": self._actions_taken,
+            **stats,
         }
+
+    def finalize(self) -> float:
+        """终局结算（幂等）：总分 = 订单得分和 + 总 visibility."""
+        return self._scoring.finalize()
 
     def on_order_served(self, order: Order, has_condiments: bool) -> None:
         """
@@ -509,9 +555,7 @@ class GameEnv:
             order.recipe_slug, has_condiments
         )
 
-        self._orders_served += 1
-        self._total_score += score
-        self._total_visibility += visibility
+        self._scoring.record_serve(score, visibility)
 
         logger.info(
             f"[t={self.time:.1f}s] Scored order {order.order_id} ({order.recipe_slug}, "
@@ -522,11 +566,11 @@ class GameEnv:
         )
 
     def on_order_timeout(self, order_id: int) -> None:
-        self._orders_timeout += 1
+        self._scoring.record_timeout()
 
     def on_action_taken(self) -> None:
         """每次执行动作时调用，更新统计"""
-        self._actions_taken += 1
+        self._scoring.record_action()
 
     # ========================================================================
     # 扩展方法（GameEnv 特有）

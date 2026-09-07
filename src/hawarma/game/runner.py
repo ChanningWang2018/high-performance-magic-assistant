@@ -86,7 +86,9 @@ class Runner:
         finally:
             self._running = False
 
-        # 3. 返回统计
+        # 3. 终局结算（幂等）后返回统计：含 total_score（逐单和）、
+        #    total_visibility、final_score（逐单和+visibility）、scoring_version
+        self.env.finalize()
         return self.env.get_stats()
 
     async def _wait_for_game_start(self) -> None:
@@ -266,7 +268,7 @@ class Runner:
                 reused_ids.add(id(matched))
                 continue
 
-            # 创建新订单
+            # 创建新订单：生成瞬间锁定当前总 visibility（与 add_order 同语义）
             timeout = 40.0 if is_rush else 70.0
             order = Order(
                 order_id=self.env._next_order_id,
@@ -274,6 +276,7 @@ class Runner:
                 is_rush=is_rush,
                 created_at=now,
                 timeout_at=now + timeout,
+                spawned_at_visibility=self.env._scoring.total_visibility,
                 done=False,
             )
             self.env._next_order_id += 1

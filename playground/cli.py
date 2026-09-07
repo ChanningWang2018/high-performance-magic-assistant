@@ -60,6 +60,8 @@ def cmd_run(args):
     print(f"  Seed: {result.seed}")
     print(f"  Strategy: {result.strategy_name}")
     print(f"  Total Reward: {result.total_reward:.0f}")
+    print(f"  Total Visibility: {result.total_visibility:.0f}")
+    print(f"  Final Score: {result.final_score:.0f} [{result.scoring_version}]")
     print(f"  Steps: {result.steps}")
     print(f"  Actions: {result.actions_taken}")
 

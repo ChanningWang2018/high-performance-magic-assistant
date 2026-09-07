@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from hawarma.agent.strategy import Strategy
 
 from playground.bench.metric import EfficiencyMetrics, MetricsCollector
+from hawarma.core.scoring import SCORING_VERSION, finalize_score
 
 
 @dataclass
@@ -25,6 +26,7 @@ class EpisodeResult:
     """单局游戏结果"""
 
     total_reward: float
+    """单步累积：订单得分之和（v1 口径，不含终局 visibility 加成）"""
     steps: int
     actions_taken: int
     orders_served: int
@@ -36,6 +38,18 @@ class EpisodeResult:
     """[(time, state, action), ...] 用于 replay"""
     metrics: EfficiencyMetrics | None = None
     """效率指标（详见 playground/bench/metrics.py）"""
+    total_visibility: float = 0.0
+    """终局总 visibility（已完成订单 visibility 之和）"""
+    final_score: float = 0.0
+    """终局分数 = total_reward + total_visibility（v2 口径）"""
+    scoring_version: str = SCORING_VERSION
+    """计分口径版本（v1=逐单和，v2=逐单和+终局visibility）"""
+
+    def __post_init__(self) -> None:
+        # 默认构造时保持终局一致性：final = sum + visibility；
+        # 显式传入的非零 final_score 予以保留（回放/旧数据重建）。
+        if self.final_score == 0.0 and (self.total_reward != 0.0 or self.total_visibility != 0.0):
+            self.final_score = finalize_score(self.total_reward, self.total_visibility)
 
 
 def run_episode(
@@ -109,6 +123,7 @@ def run_episode(
 
         obs = result.observation
 
+    total_visibility = float(getattr(obs, "total_visibility", 0.0) or 0.0)
     return EpisodeResult(
         total_reward=total_reward,
         steps=steps,
@@ -120,6 +135,9 @@ def run_episode(
         strategy_name=type(agent.strategy).__name__,
         history=history if record_history else [],
         metrics=collector.summarize() if collector else None,
+        total_visibility=total_visibility,
+        final_score=finalize_score(total_reward, total_visibility),
+        scoring_version=SCORING_VERSION,
     )
 
 
