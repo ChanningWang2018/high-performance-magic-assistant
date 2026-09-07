@@ -164,6 +164,14 @@ class GameEnv:
         """是否在动画窗口期间"""
         return time.time() < self._animation_until
 
+    def animation_window_remaining(self) -> float:
+        """动画窗口剩余时长（秒）。
+
+        只观测不改行为：供扫描循环/日志判断「新单发现滞后里动画占几成」。
+        不在动画窗口内返回 0.0。
+        """
+        return max(0.0, self._animation_until - time.time())
+
     def start_cooking(self, ingredient: str, cooker: str, duration: float) -> bool:
         """开始烹饪"""
         if cooker not in self._cookers:

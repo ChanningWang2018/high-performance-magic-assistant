@@ -8,7 +8,7 @@
 |--------|------|----------|
 | **核心代码** | [`src/hawarma/ARCHITECTURE.md`](src/hawarma/ARCHITECTURE.md) | 修改核心逻辑、理解数据流和架构 |
 | **Agent 决策** | [`src/hawarma/agent/ARCHITECTURE.md`](src/hawarma/agent/ARCHITECTURE.md) | 修改 Agent 策略、动作类型、优先级 |
-| **桥接层** | [`src/hawarma/game/ARCHITECTURE.md`](src/hawarma/game/ARCHITECTURE.md) | 修改 UI 操作、状态追踪、扫描器、双循环架构 |
+| **桥接层** | [`src/hawarma/game/ARCHITECTURE.md`](src/hawarma/game/ARCHITECTURE.md) | 修改 UI 操作、状态追踪、扫描器、三循环架构 |
 | **服务层** | [`src/hawarma/services/ARCHITECTURE.md`](src/hawarma/services/ARCHITECTURE.md) | 修改配方管理等服务组件 |
 | **工具函数** | [`src/hawarma/utils/ARCHITECTURE.md`](src/hawarma/utils/ARCHITECTURE.md) | 修改图像处理工具 |
 | **文档** | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | 查找游戏规则、设计文档、模拟器文档 |
@@ -40,7 +40,7 @@ hawarma/
 
 ### `src/hawarma/` — 核心代码
 - **地位**: Agent 自动化烹饪游戏的全部逻辑
-- **架构**: `cli.py` → `Runner` → 双循环（scan_loop + agent_loop）
+- **架构**: `cli.py` → `Runner` → 三循环并行（scan_loop + timeout_loop + agent_loop）
 - **深入阅读**: [`src/hawarma/ARCHITECTURE.md`](src/hawarma/ARCHITECTURE.md)
 
 ### `docs/` — 项目文档

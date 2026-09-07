@@ -154,6 +154,80 @@ def paired_t_test(a: list[float], b: list[float]) -> tuple[float, float]:
     return t, p
 
 
+def histogram(values: list[float], bins: int = 10) -> list[int]:
+    """把数值序列等宽分桶，返回各桶（升序）样本数。
+
+    - 空序列返回 []
+    - 全部等值退化为在 ``[v-0.5, v+0.5]`` 内等宽展开
+    """
+    return _bin_spec(values, bins)[2]
+
+
+def _bin_spec(values: list[float], bins: int = 10) -> tuple[float, float, list[int]]:
+    """返回 (左边界, 桶宽, 各桶计数)。纯观测，不依赖任何阈值。"""
+    if not values:
+        return 0.0, 0.0, []
+    lo, hi = min(values), max(values)
+    if lo == hi:
+        lo -= 0.5
+        hi += 0.5
+    width = (hi - lo) / bins
+    counts = [0] * bins
+    for v in values:
+        idx = int((v - lo) / width)
+        if idx >= bins:
+            idx = bins - 1
+        counts[idx] += 1
+    return lo, width, counts
+
+
+def print_distributions(
+    results: dict[str, list[EpisodeResult]], bins: int = 10
+) -> None:
+    """输出每策略的 SrvGap 与 Idle% 分布直方图（只观测，不卡阈值）。
+
+    数据源：每局 EfficiencyMetrics 的 avg_serve_interval 与 cooker_idle_ratio。
+    """
+    print("\n" + "-" * 80)
+    print("SrvGap / Idle distributions (per-game; observe only — no thresholds)")
+
+    for name, rs in results.items():
+        srv = [
+            round(m.avg_serve_interval, 2)
+            for r in rs
+            if (m := r.metrics) is not None
+        ]
+        idle = [
+            round(m.cooker_idle_ratio * 100, 2)
+            for r in rs
+            if (m := r.metrics) is not None
+        ]
+
+        print(f"\n[{name}] SrvGap ({len(srv)} games):")
+        _print_histogram(srv, bins=bins, unit="s")
+        print(f"[{name}] Idle% ({len(idle)} games):")
+        _print_histogram(idle, bins=bins, unit="%")
+
+    print("-" * 80)
+
+
+def _print_histogram(values: list[float], bins: int = 10, unit: str = "") -> None:
+    """渲染单个 ASCII 直方图。"""
+    if not values:
+        print("  (no samples)")
+        return
+
+    lo, width, counts = _bin_spec(values, bins)
+    max_count = max(counts) if counts else 1
+    bar_width = 40
+
+    for i, count in enumerate(counts):
+        bar = "#" * round(count / max_count * bar_width) if max_count else ""
+        lo_edge = lo + i * width
+        hi_edge = lo + (i + 1) * width
+        print(f"  {lo_edge:>6.2f}{unit} - {hi_edge:>6.2f}{unit}: {bar:<40} {count}")
+
+
 def print_comparison(results: dict[str, list[EpisodeResult]]) -> None:
     """打印策略对比表格"""
     stats = {name: compute_stats(rs) for name, rs in results.items()}
@@ -214,6 +288,10 @@ def print_comparison(results: dict[str, list[EpisodeResult]]) -> None:
                     f"{s.avg_clear_asm:>7.1f} {s.avg_serve_gap:>7.1f}s {s.avg_none_ratio*100:>5.1f}% "
                     f"{s.avg_stockpile_in:>6.1f} {s.avg_stockpile_out:>6.1f} {s.avg_stockpile_max:>6.1f}"
                 )
+
+    # SrvGap / Idle 分布直方图（每策略；只观测，不卡阈值）
+    if any(s.has_metrics for s in stats.values()):
+        print_distributions(results)
 
     print("=" * 80)
 

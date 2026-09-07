@@ -79,6 +79,7 @@
   - `scanner.py`: Scanner，图像检测订单（食材、rush 检测、冲突解决）
   - `operator.py`: Operator，swipe 坐标映射和执行
   - `verifier.py`: Verifier，组装站清空验证
+  - `timing.py`: ExecutionTiming，执行耗时观测（分段聚合，只观测不改行为）
   - `env.py`: 模块文档（真实环境和模拟环境通过 UnifiedState + Action 共享数据契约，不定义 ABC）
   - `patch_maxtouch.py`: Maxtouch swipe 补丁
 
@@ -111,9 +112,9 @@ cli.py / tui.py
 Runner (game/runner.py)
   │
   ├─ 三个并行循环:
-  │   ├─ scan_loop (0.5s)    → Scanner → GameEnv.add_order()
-  │   ├─ timeout_loop (0.3s) → GameEnv.check_and_remove_timed_out_orders()
-  │   └─ agent_loop (0.1s)   → Runner.step() → _execute_action()
+  │   ├─ scan_loop (自适应 0.4s/0.5s) → Scanner → GameEnv.add_order()
+  │   ├─ timeout_loop (0.3s)         → GameEnv.check_and_remove_timed_out_orders()
+  │   └─ agent_loop (事件驱动)        → Strategy.decide() → _execute_action()
   │
   ├─ GameEnv (game/game_env.py)
   │     └─ 程序逻辑追踪: 灶台、组装站、搅拌盆、库存、订单、调料

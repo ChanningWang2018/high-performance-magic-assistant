@@ -14,6 +14,7 @@ UI 操作执行器
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Optional
 
 from loguru import logger
@@ -22,6 +23,7 @@ from hawarma.config import AppConfig
 from hawarma.recipe import Recipe, Station
 
 from hawarma.game.patch_maxtouch import apply_patch
+from hawarma.game.timing import ExecutionTiming
 
 apply_patch()
 
@@ -60,7 +62,10 @@ class Operator:
         
         # 异步锁
         self._lock = asyncio.Lock()
-        
+
+        # 滑动往返耗时观测（只观测不改行为）
+        self.timing = ExecutionTiming()
+
         # 构建坐标映射
         self._build_mappings()
         
@@ -165,8 +170,12 @@ class Operator:
         """
         async with self._lock:
             from airtest.core.api import swipe
+            t0 = time.perf_counter()
             swipe(start, end, duration=duration, steps=steps)
             await asyncio.sleep(0.01)
+            dt = time.perf_counter() - t0
+            self.timing.swipe.record(dt)
+            logger.debug(f"Swipe {start}->{end} round-trip: {dt:.4f}s")
     
     async def cook(self, ingredient: str, cooker: str) -> None:
         """

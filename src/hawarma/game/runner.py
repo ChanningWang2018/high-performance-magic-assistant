@@ -27,6 +27,7 @@ from .game_env import GameEnv
 from .scanner import Scanner
 from .operator import Operator
 from .verifier import Verifier
+from .timing import ExecutionTiming, Timer
 
 
 class Runner:
@@ -60,6 +61,9 @@ class Runner:
         self._agent_wakeup = asyncio.Event()
         self._last_served: dict[tuple[str, bool], float] = {}
 
+        # 执行耗时观测（只观测不改行为）：送餐验证路径分段计时
+        self._timing = ExecutionTiming()
+
         self._build_action_handlers()
 
     async def run(self) -> dict:
@@ -87,9 +91,28 @@ class Runner:
             self._running = False
 
         # 3. 终局结算（幂等）后返回统计：含 total_score（逐单和）、
-        #    total_visibility、final_score（逐单和+visibility）、scoring_version
+        #    total_visibility、final_score（逐单和+visibility）、scoring_version，
+        #    以及执行耗时观测定时（timing，只观测不改行为）
         self.env.finalize()
-        return self.env.get_stats()
+        stats = self.env.get_stats()
+        stats["timing"] = self._collect_timing()
+        self._log_timing_summary(stats["timing"])
+        return stats
+
+    def _collect_timing(self) -> dict[str, dict[str, int | float]]:
+        """汇总执行耗时观测：滑动往返（Operator）+ 送餐验证各段（Runner）。"""
+        timing = self._timing.to_dict()
+        timing["swipe"] = self.ui.timing.swipe.to_dict()
+        return timing
+
+    def _log_timing_summary(self, timing: dict[str, dict[str, int | float]]) -> None:
+        """逐段输出耗时汇总（均值/次数），使「时间花在哪里」可见。"""
+        logger.info("Execution timing summary:")
+        for name, seg in timing.items():
+            logger.info(
+                f"  {name}: count={seg['count']}, total={seg['total']:.3f}s, "
+                f"avg={seg['avg']:.4f}s, max={seg['max']:.3f}s"
+            )
 
     async def _wait_for_game_start(self) -> None:
         """等待游戏开始：优先检测 timer，兜底检测订单是否出现，然后等待 3 秒
@@ -146,7 +169,11 @@ class Runner:
             try:
                 if self.env.is_in_animation_window():
                     # 动画窗口期间：sleep 到动画结束后再扫描
-                    remaining = self.env._animation_until - time.time()
+                    remaining = self.env.animation_window_remaining()
+                    logger.debug(
+                        f"[t={self.env.time:.1f}s] Animation window remaining: "
+                        f"{remaining:.2f}s"
+                    )
                     if remaining > 0:
                         await asyncio.sleep(remaining + 0.1)
                     # 动画结束后唤醒 agent
@@ -493,13 +520,23 @@ class Runner:
         3. 失败后重试相邻左侧 slot（slot_idx - 1）
         4. 两次都失败则丢弃菜品，清空 assembly
 
+        只观测不改行为：沿途对「验证等待 / 截图验证 / 重试 / 清理」
+        分别埋耗时打点（swipe 自身由 Operator 观测）。
+
         Returns:
             成功的 slot_idx，如果失败返回 None
         """
         # 第一次尝试：原始 slot
         await self.ui.serve_order(slot_idx)
+
+        wait_timer = Timer(self._timing.serve_verify_wait)
         await asyncio.sleep(0.2)  # 等待动画渲染
-        if await self._verify_with_multi_snapshot():
+        wait_timer.record()
+
+        snapshot_timer = Timer(self._timing.serve_verify_snapshot)
+        verified = await self._verify_with_multi_snapshot()
+        snapshot_timer.record()
+        if verified:
             return slot_idx
 
         logger.warning(
@@ -507,21 +544,26 @@ class Runner:
             f"Assembly still has: {self.env.assembly.ingredients_cookers}"
         )
 
-        # 重试相邻左侧 slot
+        # 重试相邻左侧 slot（整个重试段计时；无左侧 slot 时不重试不计时）
         retry_slot = slot_idx - 1
         if retry_slot >= 0:
+            retry_timer = Timer(self._timing.serve_retry)
             await asyncio.sleep(0.05)
             await self.ui.serve_order(retry_slot)
             await asyncio.sleep(0.2)  # 等待动画渲染
-            if await self._verify_with_multi_snapshot():
+            retry_result = await self._verify_with_multi_snapshot()
+            retry_timer.record()
+            if retry_result:
                 logger.info(
                     f"[t={self.env.time:.1f}s] Serve succeeded at slot {retry_slot}"
                 )
                 return retry_slot
 
-        # 两次都失败，丢弃菜品
+        # 两次都失败，丢弃菜品（清理段计时）
+        cleanup_timer = Timer(self._timing.serve_cleanup)
         await self.ui.clear_assembly()
         self.env.clear_assembly()
+        cleanup_timer.record()
         logger.warning(
             f"[t={self.env.time:.1f}s] Both serve attempts failed. Assembly discarded."
         )

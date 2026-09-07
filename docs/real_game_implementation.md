@@ -12,7 +12,7 @@
 | **UI 自动化** | Airtest (Poco) | 屏幕截图、图像识别、触摸操作 |
 | **截图方法** | MinicapApk | 通过 APK 进行高效屏幕截图 |
 | **触控方法** | Maxtouch | Android 10+ 高性能触摸协议 |
-| **并发框架** | asyncio | 双循环并行、异步操作 |
+| **并发框架** | asyncio | 三循环并行（scan/timeout/agent）、异步操作 |
 | **数据验证** | Pydantic | 配置加载、类型安全 |
 | **日志系统** | loguru | 结构化日志、彩色输出 |
 | **配置管理** | YAML | config.yaml 统一配置管理 |
@@ -190,39 +190,43 @@ def _compute_scan_interval(self) -> float:
     active_orders = [o for o in self.env.orders if o and not o.done]
     free_cookers = [c for c in self.env.cookers.values() if not c.busy]
     
-    if active_orders and free_cookers:
-        return 0.4   # 有订单且有空闲灶台 → 快扫
-    elif not active_orders:
+    if not active_orders:
         return 0.5   # 无订单 → 中速
-    else:
-        return 2.0   # 灶台全忙 → 慢扫
+    if free_cookers:
+        return 0.4   # 有订单且有空闲灶台 → 快扫
+    return 0.5       # 灶台全忙 → 中速
 ```
 
 | 游戏状态 | 扫描间隔 | 原因 |
 |----------|----------|------|
-| 有空闲灶台 + 有活跃订单 | 0.4s | 快速发现新订单 |
+| 有活跃订单 + 有空闲灶台 | 0.4s | 快速发现新订单 |
 | 无活跃订单 | 0.5s | 等待新订单 |
-| 所有灶台都忙 | 2.0s | 减少不必要的扫描 |
+| 所有灶台都忙 | 0.5s | 等烹饪完成再处理 |
 
 ### 3.3 送餐验证 + 快速重试算法
 
-在 `runner.py` 中实现，使用快速重试机制（不依赖扫描）：
+在 `runner.py` 中实现，使用快速重试机制（不依赖扫描），沿途对分段耗时打点
+（Ticket #9，只观测不改行为）：
 
 ```
 _serve_with_verify(slot_idx):
-    for attempt in max_retries+1:
-        1. 执行 UI 送餐操作
-        2. 多点 snapshot 验证（连续3次0.05s间隔）
-        3. 验证通过 → 成功返回
-        4. 验证失败 → 依次尝试其他 slot (0→1→2→3)
-            - 找到成功 → 返回成功 slot
-            - 全部失败 → 清空组装站
+    1. 执行 UI 送餐操作 (Operator.serve_order，swipe 自身由 Operator 计时)
+    2. 等待 0.2s 动画渲染            → serve_verify_wait 段计时
+    3. 多点 snapshot 验证             → serve_verify_snapshot 段计时
+       验证通过 → 返回 slot_idx
+    4. 验证失败 → 重试相邻左侧 slot (slot_idx - 1)   → serve_retry 段计时
+       等待 0.05s → 再次 serve → 等待 0.2s → 多点 snapshot 验证
+       成功 → 返回 retry_slot
+    5. 两次都失败 → clear_assembly 丢弃菜品   → serve_cleanup 段计时
+       返回 None
 ```
 
 **关键设计**：
-- 不用扫描匹配订单，直接依次尝试所有 slot
-- 多点 snapshot 避免单次截图的时效性问题
+- 不用扫描匹配订单，只重试相邻左侧一个 slot（处理槽位左移错位）
+- 多点 snapshot 避免单次截图的时效性问题（`_verify_with_multi_snapshot` 连取 3 张 warm-up 帧后，
+  用第 4 次 `Verifier.is_assembly_empty()` 的模板匹配结果判定）
 - 无需检查动画窗口（直接使用 UI 操作结果）
+- 分段耗时（验证等待 / 截图 / 重试 / 清理）汇总进 Runner 的 `execution timing`
 
 ### 3.4 食材过期检测
 
@@ -274,8 +278,8 @@ def add_to_assembly(self, cooker_name: str) -> bool:
 | **Maxtouch 加速** | Android 10+ 高性能触摸，swipe 从 ~0.93s → ~0.1s |
 | **MinicapApk 延迟初始化** | 第一次 snapshot 时才建立 stream，避免帧缓冲区积累 |
 | **异步截图** | `asyncio.to_thread(G.DEVICE.snapshot)` 不阻塞事件循环 |
-| **自适应扫描频率** | 根据灶台/订单状态动态调整：0.4s (空闲灶台) / 0.5s (忙碌) / 2.0s (全忙) |
-| **双循环并行** | scan/timeout/agent 三个循环独立运行，互不阻塞 |
+| **自定义扫描频率** | 根据灶台/订单状态动态调整：0.4s (空闲灶台) / 0.5s (其他) |
+| **三循环并行** | scan / timeout / agent 三个循环独立运行，互不阻塞 |
 | **动画窗口检查** | agent_loop 只禁止送餐，允许烹饪继续 |
 | **UI 操作锁** | asyncio.Lock() 防止并发 swipe 冲突 |
 | **多点snapshot验证** | 送餐后连续3次截图，避免单次截图时效性问题 |
@@ -360,9 +364,10 @@ def add_to_assembly(self, cooker_name: str) -> bool:
    - 原因: 订单来自屏幕，变化不可预测；灶台/组装站/库存由 Agent 控制
    - 效果: 减少图像检测开销，提高响应速度
 
-2. **双循环并行架构**
-   - 扫描循环 (0.5-2s): 订单变化慢，低频检测
-   - 决策循环 (0.05s): 状态变化快，高频决策
+2. **三循环并行架构**
+   - 扫描循环 (0.4s/0.5s 自适应): 订单变化慢，低频检测
+   - 超时循环 (0.3s): 订单超时时间敏感，独立轮询
+   - 决策循环 (事件驱动): 只在状态变化时被唤醒决策，0.5s 兜底
    - 效果: 平衡检测开销和响应延迟
 
 3. **实时时间 vs 模拟 tick**
